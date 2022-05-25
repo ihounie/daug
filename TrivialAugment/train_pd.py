@@ -17,6 +17,7 @@ from torch import nn, optim
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.nn.functional import relu
 from torchvision import transforms
 
 from tqdm import tqdm
@@ -35,7 +36,7 @@ import aug_lib
 logger = get_logger('TrivialAugment')
 logger.setLevel(logging.DEBUG)
 
-def run_epoch(rank, worldsize, model, loader, loss_fn, optimizer, desc_default='', epoch=0, writer=None, verbose=1, scheduler=None,sample_pairing_loader=None):
+def run_epoch(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars, augmented_dset=None, desc_default='', epoch=0, writer=None, verbose=1, scheduler=None,sample_pairing_loader=None):
     tqdm_disable = bool(os.environ.get('TASK_NAME', ''))    # KakaoBrain Environment
     if verbose:
         logging_loader = tqdm(loader, disable=tqdm_disable)
@@ -59,7 +60,7 @@ def run_epoch(rank, worldsize, model, loader, loss_fn, optimizer, desc_default='
         aug_lib.blend_images = [transforms.ToPILImage()(sample_pairing_loader.denorm(ti)) for ti in
                                 next(sample_pairing_iter)[0]]
     for batch in logging_loader: # logging loader might be a loader or a loader wrapped into tqdm
-        data, label = batch[:2]
+        data, label, indexes = batch[:3]
         steps += 1
         if C.get().get('load_sample_pairing_batch',False) and sample_pairing_loader is not None:
             try:
@@ -78,8 +79,37 @@ def run_epoch(rank, worldsize, model, loader, loss_fn, optimizer, desc_default='
         if optimizer and (communicate_grad_every == 1 or just_communicated_grad):
             optimizer.zero_grad()
 
+        batch_subset = Subset(augmented_dset, indexes)
+        aug_loader = torch.utils.data.DataLoader(batch_subset, batch_size=indexes.shape[0], shuffle=False, num_workers=8, pin_memory=True,drop_last=False)
+        ones = torch.ones_like(last_loss)
+
+        ##########################################
+        # Metropolis Hastings constraint sampling
+        ##########################################
+        for _ in  C.get()['MH'].get('steps'):
+            aug_data = next(iter(loader))[0]
+            if worldsize > 1:
+                aug_data = aug_data.to(rank)
+            else:
+                aug_data = aug_data.cuda()
+
+            proposal_loss = loss_fn(model(aug_data), labels)
+            acceptance_ratio = (
+                torch.minimum((proposal_loss / last_loss), ones)
+            )
+            accepted = torch.bernoulli(acceptance_ratio).bool()
+            mh_data[accepted] = proposal[accepted].type(delta.dtype)
+            last_loss[accepted] = proposal_loss[accepted]
+        ##############################    
         preds = model(data)
         loss = loss_fn(preds, label)
+        ##############################
+        #   Primal Descent Step
+        ##############################
+        mh_preds = model(mh_data)
+        mh_loss = loss_fn(mh_preds, label)
+        # Primal descent
+        loss = loss + dual_vars * mh_loss
         if optimizer:
             if communicate_grad:
                 loss.backward()
@@ -91,6 +121,12 @@ def run_epoch(rank, worldsize, model, loader, loss_fn, optimizer, desc_default='
                 nn.utils.clip_grad_norm_(model.parameters(), C.get()['optimizer'].get('clip', 5))
             if (steps-1) % C.get().get('step_optimizer_every', 1) == C.get().get('step_optimizer_nth_step', 0): # default is to step on the first step of each pack
                 optimizer.step()
+        ##############################
+        #   Dual Ascent Step
+        ##############################
+        with torch.no_grad():
+            dual_var = relu(dual_var + C.get()['PD'].get('lr') * (mh_loss.detach() - C.get()['PD'].get('margin')))
+        ##############################
         #print(f"Time for forward/backward {time()-fb_time}")
         top1, top5 = accuracy(preds, label, (1, 5))
         metrics.add_dict({
@@ -126,7 +162,7 @@ def run_epoch(rank, worldsize, model, loader, loss_fn, optimizer, desc_default='
     if verbose:
         for key, value in metrics.items():
             writer.add_scalar(key, value, epoch)
-    return metrics
+    return metrics, dual_vars
 
 
 def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, reporter=None, metric='last', save_path=None, only_eval=False):
@@ -144,7 +180,7 @@ def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, re
 
     aug_lib.set_augmentation_space(C.get().get('augmentation_search_space', 'standard'), C.get().get('augmentation_parameter_max', 30), C.get().get('custom_search_space_augs', None))
     max_epoch = C.get()['epoch']
-    trainsampler, trainloader, validloader, testloader_, testtrainloader_, dataset_info = get_dataloaders(C.get()['dataset'], C.get()['batch'], dataroot, test_ratio, split_idx=cv_fold, distributed=worldsize>1, started_with_spawn=C.get()['started_with_spawn'], summary_writer=writers[0])
+    trainsampler, trainloader, validloader, testloader_, testtrainloader_, dataset_info, augmented_dset = get_dataloaders(C.get()['dataset'], C.get()['batch'], dataroot, test_ratio, split_idx=cv_fold, distributed=worldsize>1, started_with_spawn=C.get()['started_with_spawn'], summary_writer=writers[0])
 
     # create a model & an optimizer
     model = get_model(C.get()['model'], C.get()['batch'], num_class(C.get()['dataset']), writer=writers[0])
@@ -237,13 +273,14 @@ def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, re
 
     # train loop
     best_top1 = 0
+    dual_vars = 0
     for epoch in range(epoch_start, max_epoch + 1):
         if worldsize > 1:
             trainsampler.set_epoch(epoch)
 
         model.train()
         rs = dict()
-        rs['train'] = run_epoch(rank, worldsize,model, trainloader, criterion, optimizer, desc_default='train', epoch=epoch, writer=writers[0], verbose=True, scheduler=scheduler, sample_pairing_loader=testtrainloader_)
+        rs['train'], dual_vars = run_epoch(rank, worldsize,model, trainloader, criterion, optimizer, dual_vars,augmented_dset=augmented_dset, desc_default='train', epoch=epoch, writer=writers[0], verbose=True, scheduler=scheduler, sample_pairing_loader=testtrainloader_)
         model.eval()
 
         if math.isnan(rs['train']['loss']):
@@ -340,9 +377,8 @@ def spawn_process(global_rank, worldsize, port_suffix, args, config_path=None, c
     print('dist info', local_rank,global_rank,worldsize)
     #communicate_results_with_queue.value = 1.
     #return
-    if args.config is not None:
-        C(args.config)
-    
+    if config_path is not None:
+        C(config_path)
     C.get()['started_with_spawn'] = started_with_spawn
 
     if worldsize:
@@ -401,7 +437,6 @@ class Args:
     cv: int = 0
     only_eval: bool = False
     local_rank: None = None
-    config_path: str = None
 
 def run_from_py(dataroot, config_dict, save=''):
     args = Args(dataroot=dataroot, save=save)

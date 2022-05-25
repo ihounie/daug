@@ -2,6 +2,7 @@ import logging
 import os
 import random
 from collections import Counter
+from copy import deepcopy
 
 import torchvision
 from PIL import Image
@@ -18,6 +19,21 @@ from TrivialAugment.common import get_logger, copy_and_replace_transform, strati
 from TrivialAugment.imagenet import ImageNet
 
 from TrivialAugment.augmentations import Lighting
+
+
+def dataset_with_indices(cls):
+    """
+    Modifies the given Dataset class to return a tuple data, target, index
+    instead of just data, target.
+    From https://discuss.pytorch.org/t/how-to-retrieve-the-sample-indices-of-a-mini-batch/7948/18
+    """
+    def __getitem__(self, index):
+        data, target = cls.__getitem__(self, index)
+        return data, target, index
+
+    return type(cls.__name__, (cls,), {
+        '__getitem__': __getitem__,
+    })
 
 logger = get_logger('TrivialAugment')
 logger.setLevel(logging.INFO)
@@ -159,6 +175,11 @@ def get_dataloaders(dataset, batch, dataroot, split=0.15, split_idx=0, distribut
         assert not C.get()['randaug'].get('corrected_sample_space') and not C.get()['randaug'].get('google_augmentations')
         transform_train.transforms.insert(0, get_randaugment(n=C.get()['randaug']['N'], m=C.get()['randaug']['M'],
                                                              weights=C.get()['randaug'].get('weights',None), bs=C.get()['batch']))
+    if C.get()['aug'] == 'primaldual':
+        assert not C.get()['randaug'].get('corrected_sample_space') and not C.get()['randaug'].get('google_augmentations')
+        transform_aug = [get_randaugment(n=C.get()['randaug']['N'], m=C.get()['randaug']['M'],
+                                                             weights=C.get()['randaug'].get('weights',None), bs=C.get()['batch'])]
+        transform_aug = transforms.Compose([pre_transform_train]+ transform_aug+ deepcopy(transform_train.transforms))
     elif C.get()['aug'] in ['default', 'inception', 'inception320']:
         pass
     else:
@@ -168,6 +189,7 @@ def get_dataloaders(dataset, batch, dataroot, split=0.15, split_idx=0, distribut
 
     if C.get()['cutout'] > 0:
         transform_train.transforms.append(CutoutDefault(C.get()['cutout']))
+        transform_aug.transforms.append(CutoutDefault(C.get()['cutout']))
 
     if 'preprocessor' in C.get():
         if 'imagenet' in dataset:
@@ -189,23 +211,37 @@ def get_dataloaders(dataset, batch, dataroot, split=0.15, split_idx=0, distribut
 
     if dataset in ('cifar10', 'pre_transform_cifar10'):
         total_trainset = torchvision.datasets.CIFAR10(root=dataroot, train=True, download=True, transform=transform_train)
+        if C.get()['aug'] == 'primaldual':
+            aug_trainset = torchvision.datasets.CIFAR10(root=dataroot, train=True, download=True, transform=transform_aug)
         testset = torchvision.datasets.CIFAR10(root=dataroot, train=False, download=True, transform=transform_test)
     elif dataset in ('cifar100', 'pre_transform_cifar100'):
-        total_trainset = torchvision.datasets.CIFAR100(root=dataroot, train=True, download=True, transform=transform_train)
+        if C.get()['aug'] == 'primaldual':
+            total_trainset = dataset_with_indices(torchvision.datasets.CIFAR100)(root=dataroot, train=True, download=True, transform=transform_train)
+            aug_trainset = torchvision.datasets.CIFAR100(root=dataroot, train=True, download=True, transform=transform_aug)
+        else:
+            total_trainset = torchvision.datasets.CIFAR100(root=dataroot, train=True, download=True, transform=transform_train)
         testset = torchvision.datasets.CIFAR100(root=dataroot, train=False, download=True, transform=transform_test)
     elif dataset == 'svhncore':
         total_trainset = torchvision.datasets.SVHN(root=dataroot, split='train', download=True,
                                                    transform=transform_train)
+        if C.get()['aug'] == 'primaldual':
+            torchvision.datasets.SVHN(root=dataroot, split='train', download=True, transform=transform_aug)
         testset = torchvision.datasets.SVHN(root=dataroot, split='test', download=True, transform=transform_test)
     elif dataset == 'svhn':
         trainset = torchvision.datasets.SVHN(root=dataroot, split='train', download=True, transform=transform_train)
         extraset = torchvision.datasets.SVHN(root=dataroot, split='extra', download=True, transform=transform_train)
         total_trainset = ConcatDataset([trainset, extraset])
+        if C.get()['aug'] == 'primaldual':
+            aug_t =  torchvision.datasets.SVHN(root=dataroot, split='train', download=True, transform=transform_aug)
+            aug_e =  torchvision.datasets.SVHN(root=dataroot, split='extra', download=True, transform=transform_aug)
+            aug_trainset = ConcatDataset([aug_t, aug_e])
         testset = torchvision.datasets.SVHN(root=dataroot, split='test', download=True, transform=transform_test)
     elif dataset in ('imagenet', 'ohl_pipeline_imagenet', 'smallwidth_imagenet'):
         # Ignore archive only means to not to try to extract the files again, because they already are and the zip files
         # are not there no more
         total_trainset = ImageNet(root=os.path.join(dataroot, 'imagenet-pytorch'), transform=transform_train, ignore_archive=True)
+        if C.get()['aug'] == 'primaldual':
+            aug_trainset = ImageNet(root=os.path.join(dataroot, 'imagenet-pytorch'), transform=transform_aug, ignore_archive=True)
         testset = ImageNet(root=os.path.join(dataroot, 'imagenet-pytorch'), split='val', transform=transform_test, ignore_archive=True)
 
         # compatibility
@@ -265,7 +301,10 @@ def get_dataloaders(dataset, batch, dataroot, split=0.15, split_idx=0, distribut
         drop_last=False, sampler=test_train_sampler
     )
     test_trainloader.denorm = lambda x: denormalize(x, dataset_info['mean'], dataset_info['std'])
-    return train_sampler, trainloader, validloader, testloader, test_trainloader, dataset_info
+    if C.get()['aug'] == 'primaldual':
+        return train_sampler, trainloader, validloader, testloader, test_trainloader, dataset_info, aug_trainset
+    else:
+        return train_sampler, trainloader, validloader, testloader, test_trainloader, dataset_info
 
 
 class SubsetSampler(Sampler):
