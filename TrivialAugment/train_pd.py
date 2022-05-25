@@ -18,6 +18,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.nn.functional import relu
+from torch.utils.data import Subset, DataLoader
 from torchvision import transforms
 
 from tqdm import tqdm
@@ -80,25 +81,32 @@ def run_epoch(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars, aug
             optimizer.zero_grad()
 
         batch_subset = Subset(augmented_dset, indexes)
-        aug_loader = torch.utils.data.DataLoader(batch_subset, batch_size=indexes.shape[0], shuffle=False, num_workers=8, pin_memory=True,drop_last=False)
-        ones = torch.ones_like(last_loss)
+        aug_loader = DataLoader(batch_subset, batch_size=indexes.shape[0], shuffle=False, num_workers=8, pin_memory=True,drop_last=False)
 
         ##########################################
         # Metropolis Hastings constraint sampling
         ##########################################
-        for _ in  C.get()['MH'].get('steps'):
-            aug_data = next(iter(loader))[0]
+        aug_data = next(iter(aug_loader))[0]
+        if worldsize > 1:
+                aug_data = aug_data.to(rank)
+        else:
+            aug_data = aug_data.cuda()
+        last_loss = loss_fn(model(aug_data), label)
+        ones = torch.ones_like(last_loss)
+        mh_data = aug_data
+        for _ in  range(C.get()['MH'].get('steps')-1):
+            aug_data = next(iter(aug_loader))[0]
             if worldsize > 1:
                 aug_data = aug_data.to(rank)
             else:
                 aug_data = aug_data.cuda()
 
-            proposal_loss = loss_fn(model(aug_data), labels)
+            proposal_loss = loss_fn(model(aug_data), label)
             acceptance_ratio = (
                 torch.minimum((proposal_loss / last_loss), ones)
             )
             accepted = torch.bernoulli(acceptance_ratio).bool()
-            mh_data[accepted] = proposal[accepted].type(delta.dtype)
+            mh_data[accepted] = aug_data[accepted]
             last_loss[accepted] = proposal_loss[accepted]
         ##############################    
         preds = model(data)
@@ -125,7 +133,7 @@ def run_epoch(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars, aug
         #   Dual Ascent Step
         ##############################
         with torch.no_grad():
-            dual_var = relu(dual_var + C.get()['PD'].get('lr') * (mh_loss.detach() - C.get()['PD'].get('margin')))
+            dual_vars = relu(dual_vars + C.get()['PD'].get('lr') * (mh_loss.detach() - C.get()['PD'].get('margin')))
         ##############################
         #print(f"Time for forward/backward {time()-fb_time}")
         top1, top5 = accuracy(preds, label, (1, 5))

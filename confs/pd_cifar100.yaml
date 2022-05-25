@@ -1,7 +1,7 @@
 model:
   type: wresnet28_10
 dataset: cifar100
-aug: randaugment
+aug: primaldual
 randaug:
   N: 0
   M: 0    # from appendix
@@ -19,7 +19,7 @@ optimizer:
   nesterov: True
   decay: 0.0005
 MH:
-  steps: 5
+  steps: 4
 PD:
   lr: 0.0001
   margin: 0.8
