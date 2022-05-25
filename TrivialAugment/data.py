@@ -175,7 +175,7 @@ def get_dataloaders(dataset, batch, dataroot, split=0.15, split_idx=0, distribut
         assert not C.get()['randaug'].get('corrected_sample_space') and not C.get()['randaug'].get('google_augmentations')
         transform_train.transforms.insert(0, get_randaugment(n=C.get()['randaug']['N'], m=C.get()['randaug']['M'],
                                                              weights=C.get()['randaug'].get('weights',None), bs=C.get()['batch']))
-    if C.get()['aug'] == 'primaldual':
+    elif C.get()['aug'] == 'primaldual':
         assert not C.get()['randaug'].get('corrected_sample_space') and not C.get()['randaug'].get('google_augmentations')
         transform_aug = [get_randaugment(n=C.get()['randaug']['N'], m=C.get()['randaug']['M'],
                                                              weights=C.get()['randaug'].get('weights',None), bs=C.get()['batch'])]
@@ -189,6 +189,7 @@ def get_dataloaders(dataset, batch, dataroot, split=0.15, split_idx=0, distribut
 
     if C.get()['cutout'] > 0:
         transform_train.transforms.append(CutoutDefault(C.get()['cutout']))
+    if C.get()['aug'] == 'primaldual':
         transform_aug.transforms.append(CutoutDefault(C.get()['cutout']))
 
     if 'preprocessor' in C.get():
