@@ -31,13 +31,14 @@ from TrivialAugment.data import get_dataloaders
 from TrivialAugment.lr_scheduler import adjust_learning_rate_resnet
 from TrivialAugment.metrics import accuracy, Accumulator
 from TrivialAugment.networks import get_model, num_class
+from TrivialAugment.train import run_epoch
 from warmup_scheduler import GradualWarmupScheduler
 import aug_lib
 
 logger = get_logger('TrivialAugment')
 logger.setLevel(logging.DEBUG)
 
-def run_epoch(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars, augmented_dset=None, desc_default='', epoch=0, writer=None, verbose=1, scheduler=None,sample_pairing_loader=None):
+def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars, augmented_dset=None, desc_default='', epoch=0, writer=None, verbose=1, scheduler=None,sample_pairing_loader=None):
     tqdm_disable = bool(os.environ.get('TASK_NAME', ''))    # KakaoBrain Environment
     if verbose:
         logging_loader = tqdm(loader, disable=tqdm_disable)
@@ -288,7 +289,7 @@ def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, re
 
         model.train()
         rs = dict()
-        rs['train'], dual_vars = run_epoch(rank, worldsize,model, trainloader, criterion, optimizer, dual_vars,augmented_dset=augmented_dset, desc_default='train', epoch=epoch, writer=writers[0], verbose=True, scheduler=scheduler, sample_pairing_loader=testtrainloader_)
+        rs['train'], dual_vars = run_epoch_dual(rank, worldsize,model, trainloader, criterion, optimizer, dual_vars,augmented_dset=augmented_dset, desc_default='train', epoch=epoch, writer=writers[0], verbose=True, scheduler=scheduler, sample_pairing_loader=testtrainloader_)
         model.eval()
 
         if math.isnan(rs['train']['loss']):
@@ -385,8 +386,12 @@ def spawn_process(global_rank, worldsize, port_suffix, args, config_path=None, c
     print('dist info', local_rank,global_rank,worldsize)
     #communicate_results_with_queue.value = 1.
     #return
-    if config_path is not None:
-        C(config_path)
+    if args.config is not None:
+        try:
+            C(args.config[0])
+            print("conf successfully loaded")
+        except:
+            print("conf error")
     C.get()['started_with_spawn'] = started_with_spawn
 
     if worldsize:
