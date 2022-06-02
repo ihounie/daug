@@ -480,7 +480,7 @@ if __name__ == '__main__':
         print("Spawning processes")
         world_size = torch.cuda.device_count()
         port_suffix = str(random.randint(10,99))
-        if world_size > 1:
+        if False:#world_size > 1:
             outcome = mp.spawn(spawn_process,
                               args=(world_size,port_suffix,parse_args()),
                               nprocs=world_size,
