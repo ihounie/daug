@@ -8,18 +8,22 @@ randaug:
   weights: [0.0,1.0]
 cutout: 16
 batch: 128
+n_aug: 7
 gpus: 1
 augmentation_search_space: wide_standard
-epoch: 200
-lr: 0.1
+epoch: 35
+lr: 0.4
 lr_schedule:
   type: 'cosine'
+  warmup:
+  multiplier: 1
+  epoch: 5
 optimizer:
   type: sgd
   nesterov: True
   decay: 0.0005
 MH:
-  steps: 3
+  steps: 15
 PD:
   lr: 0.0001
   margin: 0.9

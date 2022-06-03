@@ -17,7 +17,7 @@ from torch import nn, optim
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.nn.functional import relu
+from torch.nn.functional import relu, cross_entropy
 from torch.utils.data import Subset, DataLoader
 from torchvision import transforms
 
@@ -87,28 +87,47 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
         ##########################################
         # Metropolis Hastings constraint sampling
         ##########################################
+        mh_steps = C.get()['MH'].get('steps')
+        # First step
         aug_data = next(iter(aug_loader))[0]
         if worldsize > 1:
                 aug_data = aug_data.to(rank)
         else:
             aug_data = aug_data.cuda()
-        last_loss = loss_fn(model(aug_data), label)
-        ones = torch.ones_like(last_loss)
-        mh_data = aug_data
-        for _ in  range(C.get()['MH'].get('steps')-1):
+        chain_state = aug_data
+        batch_size = aug_data.shape[0]
+        proposals = torch.empty([batch_size*mh_steps]+list(aug_data.shape[1:]), device = aug_data.device, dtype= aug_data.dtype)
+        proposals[0:batch_size] = aug_data
+        ###########################################
+        #   Compute Proposal Losses
+        ###########################################
+        for i in  range(1, mh_steps-1):
             aug_data = next(iter(aug_loader))[0]
             if worldsize > 1:
                 aug_data = aug_data.to(rank)
             else:
                 aug_data = aug_data.cuda()
-
-            proposal_loss = loss_fn(model(aug_data), label)
-            acceptance_ratio = (
-                torch.minimum((proposal_loss / last_loss), ones)
-            )
-            accepted = torch.bernoulli(acceptance_ratio).bool()
-            mh_data[accepted] = aug_data[accepted]
-            last_loss[accepted] = proposal_loss[accepted]
+            proposals[i*batch_size:(i+1)*batch_size] = aug_data
+        with torch.no_grad():
+            proposal_loss = cross_entropy(model(proposals), label.repeat(mh_steps), reduction="none")
+        ##################################
+        #   Build MC chain
+        ##################################
+            proposals = proposals.reshape([mh_steps]+list(aug_data.shape))
+            mh_data = torch.empty_like(proposals)
+            mh_data[0] = proposals[0]
+            proposal_loss = proposal_loss.reshape([mh_steps, batch_size])
+            last_loss = proposal_loss[0]
+            ones = torch.ones_like(last_loss)
+            for i in  range(1, mh_steps-1):
+                acceptance_ratio = (torch.minimum((proposal_loss[i] / last_loss), ones))
+                accepted = torch.bernoulli(acceptance_ratio).bool()
+                chain_state[accepted] = proposals[i][accepted]
+                last_loss[accepted] = proposal_loss[i][accepted]
+                mh_data[i] = chain_state 
+            # Keep last Samples
+            mh_data = mh_data[-C.get()['n_aug']:]
+            mh_data = torch.flatten(mh_data, start_dim=0, end_dim=1)    
         ##############################    
         preds = model(data)
         loss = loss_fn(preds, label)
@@ -116,7 +135,7 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
         #   Primal Descent Step
         ##############################
         mh_preds = model(mh_data)
-        mh_loss = loss_fn(mh_preds, label)
+        mh_loss = loss_fn(mh_preds, label.repeat(C.get()['n_aug']))
         # Primal descent
         loss = loss + dual_vars * mh_loss
         if optimizer:
@@ -200,6 +219,7 @@ def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, re
 
 
     criterion = nn.CrossEntropyLoss()
+
     if C.get()['optimizer']['type'] == 'sgd':
         optimizer = optim.SGD(
             model.parameters(),
@@ -417,7 +437,7 @@ def spawn_process(global_rank, worldsize, port_suffix, args, config_path=None, c
         torch.cuda.manual_seed(seed)
         random.seed(seed)
         np.random.seed(seed)
-        #torch.backends.cudnn.benchmark = False
+        #torch.backends.cudnn.benchmark = True
 
 
     import time
