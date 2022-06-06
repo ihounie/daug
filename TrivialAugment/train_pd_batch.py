@@ -121,7 +121,7 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
             ones = torch.ones_like(last_loss)
             for i in  range(1, mh_steps-1):
                 acceptance_ratio = (torch.minimum((proposal_loss[i] / last_loss), ones))
-                accepted = torch.bernoulli(acceptance_ratio).bool()
+                accepted = torch.bernoulli(acceptance_ratio.contiguous()).bool()
                 chain_state[accepted] = proposals[i][accepted]
                 last_loss[accepted] = proposal_loss[i][accepted]
                 mh_data[i] = chain_state 
