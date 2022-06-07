@@ -94,10 +94,10 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
                 aug_data = aug_data.to(rank)
         else:
             aug_data = aug_data.cuda()
-        chain_state = aug_data
         batch_size = aug_data.shape[0]
+        chain_state = aug_data.clone()
         proposals = torch.empty([batch_size*mh_steps]+list(aug_data.shape[1:]), device = aug_data.device, dtype= aug_data.dtype)
-        proposals[0:batch_size] = aug_data
+        proposals[0:batch_size] = aug_data.clone()
         ###########################################
         #   Compute Proposal Losses
         ###########################################
@@ -121,7 +121,8 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
             ones = torch.ones_like(last_loss)
             for i in  range(1, mh_steps-1):
                 acceptance_ratio = (torch.minimum((proposal_loss[i] / last_loss), ones))
-                accepted = torch.bernoulli(acceptance_ratio.contiguous()).bool()
+                acceptance_ratio =  acceptance_ratio *(acceptance_ratio > 0)
+                accepted = torch.bernoulli(acceptance_ratio).bool()
                 chain_state[accepted] = proposals[i][accepted]
                 last_loss[accepted] = proposal_loss[i][accepted]
                 mh_data[i] = chain_state 
