@@ -23,7 +23,7 @@ optimizer:
   nesterov: True
   decay: 0.0005
 MH:
-  steps: 15
+  steps: 8
 PD:
   lr: 0.0001
   margin: 0.9

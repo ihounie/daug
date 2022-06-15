@@ -4,6 +4,7 @@ import random
 from collections import Counter
 from copy import deepcopy
 
+
 import torchvision
 from PIL import Image
 
@@ -13,12 +14,14 @@ from torch.utils.data.dataset import ConcatDataset, Subset
 from torchvision.transforms import transforms
 from sklearn.model_selection import StratifiedShuffleSplit
 from theconf import Config as C
+from types import MethodType
 
 from TrivialAugment.augmentations import *
 from TrivialAugment.common import get_logger, copy_and_replace_transform, stratified_split, denormalize
 from TrivialAugment.imagenet import ImageNet
 
 from TrivialAugment.augmentations import Lighting
+from aug_lib import UniAugmentWeighted
 
 
 def dataset_with_indices(cls):
@@ -31,6 +34,28 @@ def dataset_with_indices(cls):
         data, target = cls.__getitem__(self, index)
         return data, target, index
 
+    return type(cls.__name__, (cls,), {
+        '__getitem__': __getitem__,
+    })
+
+def dataset_with_transform_stats(cls):
+    def __getitem__(self, index):
+        img, target = self.data[index], self.targets[index]
+        # some datasets do not return a PIL Image
+        # and transforms assume a PIL Image as input
+        if not isinstance(img, Image.Image):
+            img = Image.fromarray(img)
+
+        if self.transform is not None:
+            for t in self.transform.transforms:
+                if isinstance(t, UniAugmentWeighted):
+                    img, op_num, level = t(img)
+                else:
+                    img = t(img)
+
+        if self.target_transform is not None:
+            target = self.target_transform(target)
+        return img, target, torch.tensor(op_num), torch.tensor(level)
     return type(cls.__name__, (cls,), {
         '__getitem__': __getitem__,
     })
@@ -179,7 +204,7 @@ def get_dataloaders(dataset, batch, dataroot, split=0.15, split_idx=0, distribut
         assert not C.get()['randaug'].get('corrected_sample_space') and not C.get()['randaug'].get('google_augmentations')
         transform_aug = [get_randaugment(n=C.get()['randaug']['N'], m=C.get()['randaug']['M'],
                                                              weights=C.get()['randaug'].get('weights',None), bs=C.get()['batch'])]
-        transform_aug = transforms.Compose([pre_transform_train]+ transform_aug+ deepcopy(transform_train.transforms))
+        transform_aug = transforms.Compose([pre_transform_train]+ transform_aug+deepcopy(transform_train.transforms))
     elif C.get()['aug'] in ['default', 'inception', 'inception320']:
         pass
     else:
@@ -218,7 +243,7 @@ def get_dataloaders(dataset, batch, dataroot, split=0.15, split_idx=0, distribut
     elif dataset in ('cifar100', 'pre_transform_cifar100'):
         if C.get()['aug'] == 'primaldual':
             total_trainset = dataset_with_indices(torchvision.datasets.CIFAR100)(root=dataroot, train=True, download=True, transform=transform_train)
-            aug_trainset = torchvision.datasets.CIFAR100(root=dataroot, train=True, download=True, transform=transform_aug)
+            aug_trainset =  dataset_with_transform_stats(torchvision.datasets.CIFAR100)(root=dataroot, train=True, download=True, transform=transform_aug)
         else:
             total_trainset = torchvision.datasets.CIFAR100(root=dataroot, train=True, download=True, transform=transform_train)
         testset = torchvision.datasets.CIFAR100(root=dataroot, train=False, download=True, transform=transform_test)
@@ -235,14 +260,14 @@ def get_dataloaders(dataset, batch, dataroot, split=0.15, split_idx=0, distribut
         if C.get()['aug'] == 'primaldual':
             aug_t =  torchvision.datasets.SVHN(root=dataroot, split='train', download=True, transform=transform_aug)
             aug_e =  torchvision.datasets.SVHN(root=dataroot, split='extra', download=True, transform=transform_aug)
-            aug_trainset = ConcatDataset([aug_t, aug_e])
+            aug_trainset = dataset_with_transform_stats(ConcatDataset([aug_t, aug_e]))
         testset = torchvision.datasets.SVHN(root=dataroot, split='test', download=True, transform=transform_test)
     elif dataset in ('imagenet', 'ohl_pipeline_imagenet', 'smallwidth_imagenet'):
         # Ignore archive only means to not to try to extract the files again, because they already are and the zip files
         # are not there no more
         total_trainset = ImageNet(root=os.path.join(dataroot, 'imagenet-pytorch'), transform=transform_train, ignore_archive=True)
         if C.get()['aug'] == 'primaldual':
-            aug_trainset = ImageNet(root=os.path.join(dataroot, 'imagenet-pytorch'), transform=transform_aug, ignore_archive=True)
+            aug_trainset = dataset_with_transform_stats(ImageNet(root=os.path.join(dataroot, 'imagenet-pytorch'), transform=transform_aug, ignore_archive=True))
         testset = ImageNet(root=os.path.join(dataroot, 'imagenet-pytorch'), split='val', transform=transform_test, ignore_archive=True)
 
         # compatibility
@@ -323,8 +348,6 @@ class SubsetSampler(Sampler):
 
     def __len__(self):
         return len(self.indices)
-
-
 
 
 

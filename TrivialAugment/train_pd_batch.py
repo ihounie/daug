@@ -25,6 +25,8 @@ from tqdm import tqdm
 import yaml
 from theconf import Config as C, ConfigArgumentParser
 from argparse import ArgumentParser
+import pandas as pd
+import wandb
 
 from TrivialAugment.common import get_logger
 from TrivialAugment.data import get_dataloaders
@@ -34,11 +36,12 @@ from TrivialAugment.networks import get_model, num_class
 from TrivialAugment.train import run_epoch
 from warmup_scheduler import GradualWarmupScheduler
 import aug_lib
+from aug_lib import AugMeter
 
 logger = get_logger('TrivialAugment')
 logger.setLevel(logging.DEBUG)
 
-def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars, augmented_dset=None, desc_default='', epoch=0, writer=None, verbose=1, scheduler=None,sample_pairing_loader=None):
+def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars, wandb_log = True, augmented_dset=None, desc_default='', epoch=0, writer=None, verbose=1, scheduler=None,sample_pairing_loader=None):
     tqdm_disable = bool(os.environ.get('TASK_NAME', ''))    # KakaoBrain Environment
     if verbose:
         logging_loader = tqdm(loader, disable=tqdm_disable)
@@ -61,6 +64,7 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
         sample_pairing_iter = iter(sample_pairing_loader)
         aug_lib.blend_images = [transforms.ToPILImage()(sample_pairing_loader.denorm(ti)) for ti in
                                 next(sample_pairing_iter)[0]]
+    aug_stats =  AugMeter()
     for batch in logging_loader: # logging loader might be a loader or a loader wrapped into tqdm
         data, label, indexes = batch[:3]
         steps += 1
@@ -89,25 +93,36 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
         ##########################################
         mh_steps = C.get()['MH'].get('steps')
         # First step
-        aug_data = next(iter(aug_loader))[0]
+        aug_data, _, op, level = next(iter(aug_loader))
         if worldsize > 1:
                 aug_data = aug_data.to(rank)
         else:
             aug_data = aug_data.cuda()
         batch_size = aug_data.shape[0]
-        chain_state = aug_data.clone()
+        chain_state = aug_data
+        chain_op = op
+        chain_level = level
         proposals = torch.empty([batch_size*mh_steps]+list(aug_data.shape[1:]), device = aug_data.device, dtype= aug_data.dtype)
-        proposals[0:batch_size] = aug_data.clone()
+        ops = torch.empty([batch_size*mh_steps], device = op.device, dtype= op.dtype)
+        levels = torch.empty([batch_size*mh_steps], device = level.device, dtype= level.dtype)
+        proposals[0:batch_size] = aug_data
+        ops[0:batch_size] = op
+        levels[0:batch_size] = level
         ###########################################
         #   Compute Proposal Losses
         ###########################################
-        for i in  range(1, mh_steps-1):
-            aug_data = next(iter(aug_loader))[0]
+        for i in  range(1, mh_steps):
+            iter_loader = iter(aug_loader)
+            #a = aug_stats.get_meter_from_loader(iter_loader)
+            aug_data, _ , op, level = next(iter_loader)
             if worldsize > 1:
                 aug_data = aug_data.to(rank)
             else:
                 aug_data = aug_data.cuda()
+
             proposals[i*batch_size:(i+1)*batch_size] = aug_data
+            ops[i*batch_size:(i+1)*batch_size] = op
+            levels[i*batch_size:(i+1)*batch_size] = level
         with torch.no_grad():
             proposal_loss = cross_entropy(model(proposals), label.repeat(mh_steps), reduction="none")
         ##################################
@@ -117,18 +132,34 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
             mh_data = torch.empty_like(proposals)
             mh_data[0] = proposals[0]
             proposal_loss = proposal_loss.reshape([mh_steps, batch_size])
+            ops = ops.reshape([mh_steps, batch_size])
+            levels = levels.reshape([mh_steps, batch_size])
+            mh_ops = torch.empty_like(ops)
+            mh_levels = torch.empty_like(levels)
+            mh_ops[0] = ops[0]
+            mh_levels[0] = levels[0]
             last_loss = proposal_loss[0]
             ones = torch.ones_like(last_loss)
-            for i in  range(1, mh_steps-1):
-                acceptance_ratio = (torch.minimum((proposal_loss[i] / last_loss), ones))
-                acceptance_ratio =  acceptance_ratio *(acceptance_ratio > 0)
+            for i in  range(1, mh_steps):
+                acceptance_ratio = torch.minimum(torch.nan_to_num(proposal_loss[i] / last_loss), ones)
+                acceptance_ratio =  acceptance_ratio * (acceptance_ratio > 0)
                 accepted = torch.bernoulli(acceptance_ratio).bool()
                 chain_state[accepted] = proposals[i][accepted]
+                chain_op[accepted] = ops[i][accepted]
+                chain_level[accepted] = levels[i][accepted]
                 last_loss[accepted] = proposal_loss[i][accepted]
-                mh_data[i] = chain_state 
+                mh_data[i] = chain_state
+                mh_ops[i] = chain_op
+                mh_levels[i] = chain_level
             # Keep last Samples
             mh_data = mh_data[-C.get()['n_aug']:]
-            mh_data = torch.flatten(mh_data, start_dim=0, end_dim=1)    
+            mh_ops = mh_ops[-C.get()['n_aug']:]
+            mh_levels = mh_levels[-C.get()['n_aug']:]
+            mh_data = torch.flatten(mh_data, start_dim=0, end_dim=1)
+            mh_ops = torch.flatten(mh_ops, start_dim=0, end_dim=1)
+            mh_levels = torch.flatten(mh_levels, start_dim=0, end_dim=1)
+            aug_stats.update(mh_ops, mh_levels)
+
         ##############################    
         preds = model(data)
         loss = loss_fn(preds, label)
@@ -160,8 +191,11 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
         top1, top5 = accuracy(preds, label, (1, 5))
         metrics.add_dict({
             'loss': loss.item() * len(data),
+            'aug loss': mh_loss.item() * len(data),
             'top1': top1.item() * len(data),
             'top5': top5.item() * len(data),
+            'dual': dual_vars.item()* len(data),
+            'acc ratio': acceptance_ratio.mean().item()* len(data),
         })
         if steps % 2 == 0:
             metrics.add('eval_top1', top1.item() * len(data)) # times 2 since it is only recorded every sec step
@@ -186,15 +220,23 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
             logger.info('[%s %03d/%03d] %s', desc_default, epoch, C.get()['epoch'], metrics.divide(cnt, eval_top1=eval_cnt))
 
     metrics = metrics.divide(cnt, eval_top1=eval_cnt)
+    if wandb_log:
+        wandb.log(metrics.metrics)
+        aug_stats.process()
+        for op in aug_stats.transform_names:
+            wandb.log({f"Transformation Levels {op}": wandb.Histogram(aug_stats.stats["levels"][op])})
+            wandb.log({f"Transformation Counts {op}":aug_stats.stats["counts"][op]})
+
     if optimizer:
         metrics.metrics['lr'] = optimizer.param_groups[0]['lr']
     if verbose:
         for key, value in metrics.items():
             writer.add_scalar(key, value, epoch)
+
     return metrics, dual_vars
 
 
-def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, reporter=None, metric='last', save_path=None, only_eval=False):
+def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, reporter=None, metric='last', save_path=None, only_eval=False, wandb_log = False):
     if not reporter:
         reporter = lambda **kwargs: 0
 
@@ -256,7 +298,6 @@ def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, re
             total_epoch=C.get()['lr_schedule']['warmup']['epoch'],
             after_scheduler=scheduler
         )
-
     result = OrderedDict()
     epoch_start = 1
     if save_path and os.path.exists(save_path):
@@ -310,7 +351,7 @@ def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, re
 
         model.train()
         rs = dict()
-        rs['train'], dual_vars = run_epoch_dual(rank, worldsize,model, trainloader, criterion, optimizer, dual_vars,augmented_dset=augmented_dset, desc_default='train', epoch=epoch, writer=writers[0], verbose=True, scheduler=scheduler, sample_pairing_loader=testtrainloader_)
+        rs['train'], dual_vars = run_epoch_dual(rank, worldsize,model, trainloader, criterion, optimizer, dual_vars, wandb_log = wandb_log, augmented_dset=augmented_dset, desc_default='train', epoch=epoch, writer=writers[0], verbose=True, scheduler=scheduler, sample_pairing_loader=testtrainloader_)
         model.eval()
 
         if math.isnan(rs['train']['loss']):
@@ -364,6 +405,8 @@ def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, re
         early_finish_epoch = C.get().get('early_finish_epoch', None)
         if early_finish_epoch == epoch:
             break
+        if wandb_log:
+            wandb.log({"train": rs["train"].get_dict(),"test": rs["train"].get_dict(), "epoch":epoch, "dualvar": dual_vars})
 
     del model
 
@@ -395,6 +438,7 @@ def parse_args():
     parser.add_argument('--cv', type=int, default=0)
     parser.add_argument('--only-eval', action='store_true')
     parser.add_argument('--local_rank', default=None, type=int)
+    parser.add_argument('--wandb_log', action='store_true')
     return parser.parse_args()
 
 
@@ -412,7 +456,12 @@ def spawn_process(global_rank, worldsize, port_suffix, args, config_path=None, c
             C(args.config[0])
             print("conf successfully loaded")
         except:
-            print("conf error")
+            print("theconf singleton error - ignore it")
+    if args.wandb_log:
+        print("logging")
+        wandb.init(project=f"DAug-Gen", name=args.tag)
+        wandb.config.update(args)
+        wandb.config.update(C.get().flatten())
     C.get()['started_with_spawn'] = started_with_spawn
 
     if worldsize:
@@ -438,12 +487,12 @@ def spawn_process(global_rank, worldsize, port_suffix, args, config_path=None, c
         torch.cuda.manual_seed(seed)
         random.seed(seed)
         np.random.seed(seed)
-        #torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.benchmark = True
 
 
     import time
     t = time.time()
-    result = train_and_eval(local_rank, worldsize, args.tag, args.dataroot, test_ratio=args.cv_ratio, cv_fold=args.cv, save_path=args.save, only_eval=args.only_eval, metric='last')
+    result = train_and_eval(local_rank, worldsize, args.tag, args.dataroot, wandb_log=args.wandb_log, test_ratio=args.cv_ratio, cv_fold=args.cv, save_path=args.save, only_eval=args.only_eval, metric='last')
     elapsed = time.time() - t
     print('done')
 
@@ -460,6 +509,7 @@ def spawn_process(global_rank, worldsize, port_suffix, args, config_path=None, c
     if global_rank == 0 and communicate_results_with_queue is not None:
         #communicate_results_with_queue.put([result])
         communicate_results_with_queue.value = result['top1_test']
+
 
 
 @dataclass
