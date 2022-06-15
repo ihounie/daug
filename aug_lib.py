@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 import re
 from PIL import ImageOps, ImageEnhance, ImageFilter, Image, ImageDraw
 import random
@@ -635,11 +636,41 @@ def num_augmentations():
 
 class TrivialAugment:
     def __call__(self, img):
-        op = random.choices(ALL_TRANSFORMS, k=1)[0]
+        op_num = random.randint(1, len(ALL_TRANSFORMS) - 1)
+        op = ALL_TRANSFORMS[op_num]
         level = random.randint(0, PARAMETER_MAX)
         img = op.pil_transformer(1., level)(img)
-        return img
+        return img, op_num, level
 
+class AugMeter:
+    def __init__(self):
+        self.transform_names = [t.name for t in ALL_TRANSFORMS]
+        self.name_to_num = {}
+        for i, t in enumerate(self.transform_names):
+            self.name_to_num[t] = i
+        self.reset_stats()
+
+    def update(self, op, level):
+        self.ops.append(op)
+        self.levels.append(level)
+
+    def process(self):
+        self.ops = torch.cat(self.ops)
+        self.levels = torch.cat(self.levels)
+        for t in self.transform_names:
+            t_num = self.name_to_num[t]
+            self.stats["counts"][t] += torch.sum(torch.eq(self.ops, t_num)).item()
+            if self.stats["levels"][t] is not None:
+                self.stats["levels"][t] =  np.concatenate(self.levels[self.ops==t_num], self.stats["levels"].cpu().numpy())
+            else:
+                self.stats["levels"][t] = self.levels[self.ops==t_num].cpu().numpy()
+        
+
+    def reset_stats(self):
+        self.ops = []
+        self.levels = []
+        self.stats = {"counts":{t: 0 for t in self.transform_names}, "levels":{t:None for t in self.transform_names}} 
+        #
 
 class RandAugment:
     def __init__(self, n, m):
@@ -669,9 +700,16 @@ class UniAugmentWeighted:
         self.probs = probs  # [prob of zero augs, prob of one aug, ..]
 
     def __call__(self, img):
-        k = random.choices(range(len(self.probs)), self.probs)[0]
-        ops = random.choices(ALL_TRANSFORMS, k=k)
-        for op in ops:
+        #k = random.choices(range(len(self.probs)), self.probs)[0]
+        #op_num = random.choices(range(1,len(ALL_TRANSFORMS)))[0]
+        op_num = random.randint(1, len(ALL_TRANSFORMS) - 1)
+        '''
+        for op_num in op_nums:
+            op = ALL_TRANSFORMS[op_num]
             level = random.randint(0, PARAMETER_MAX)
             img = op.pil_transformer(1., level)(img)
-        return img
+        '''
+        op = ALL_TRANSFORMS[op_num]
+        level = random.randint(1, PARAMETER_MAX)
+        img = op.pil_transformer(1., level)(img)
+        return img, op_num, level
