@@ -418,7 +418,9 @@ def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, re
                 if save_path and C.get().get('save_model', True):
                     wandb.save()
             else:
-                wandb.log({"train": rs["train"].get_dict(),"test": rs["test"].get_dict(), "epoch":epoch, "dualvar": dual_vars})
+                wandb.log({"train": rs["train"].get_dict(), "epoch":epoch, "dualvar": dual_vars})
+                if epoch % 20 == 0:
+                    wandb.log({"test": rs["test"].get_dict(), "epoch":epoch})
 
     del model
 
