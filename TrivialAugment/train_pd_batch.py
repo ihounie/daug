@@ -3,6 +3,7 @@ import json
 import logging
 import math
 import os
+from pathlib import Path
 from collections import OrderedDict
 import gc
 import tempfile
@@ -54,6 +55,7 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
     eval_cnt = 0
     total_steps = len(loader)
     steps = 0
+    sample_constraint = C.get()['PD'].get('sample')
 
     gc.collect()
     torch.cuda.empty_cache()
@@ -132,6 +134,8 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
             mh_data = torch.empty_like(proposals)
             mh_data[0] = proposals[0]
             proposal_loss = proposal_loss.reshape([mh_steps, batch_size])
+            mh_loss =  torch.empty_like(proposal_loss)
+            mh_loss[0] = proposal_loss[0]
             ops = ops.reshape([mh_steps, batch_size])
             levels = levels.reshape([mh_steps, batch_size])
             mh_ops = torch.empty_like(ops)
@@ -140,10 +144,12 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
             mh_levels[0] = levels[0]
             last_loss = proposal_loss[0]
             ones = torch.ones_like(last_loss)
+            accepted_all = torch.empty([mh_steps-1, batch_size], device=last_loss.device, dtype=torch.bool)
             for i in  range(1, mh_steps):
                 acceptance_ratio = torch.minimum(torch.nan_to_num(proposal_loss[i] / last_loss), ones)
                 acceptance_ratio =  acceptance_ratio * (acceptance_ratio > 0)
                 accepted = torch.bernoulli(acceptance_ratio).bool()
+                accepted_all[i-1] = accepted
                 chain_state[accepted] = proposals[i][accepted]
                 chain_op[accepted] = ops[i][accepted]
                 chain_level[accepted] = levels[i][accepted]
@@ -151,25 +157,33 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
                 mh_data[i] = chain_state
                 mh_ops[i] = chain_op
                 mh_levels[i] = chain_level
+                mh_loss[i] = last_loss
             # Keep last Samples
             mh_data = mh_data[-C.get()['n_aug']:]
             mh_ops = mh_ops[-C.get()['n_aug']:]
             mh_levels = mh_levels[-C.get()['n_aug']:]
+            mh_loss = mh_loss[-C.get()['n_aug']:]
             mh_data = torch.flatten(mh_data, start_dim=0, end_dim=1)
             mh_ops = torch.flatten(mh_ops, start_dim=0, end_dim=1)
             mh_levels = torch.flatten(mh_levels, start_dim=0, end_dim=1)
             aug_stats.update(mh_ops, mh_levels)
 
-        ##############################    
-        preds = model(data)
-        loss = loss_fn(preds, label)
         ##############################
         #   Primal Descent Step
         ##############################
-        mh_preds = model(mh_data)
-        mh_loss = loss_fn(mh_preds, label.repeat(C.get()['n_aug']))
-        # Primal descent
-        loss = loss + dual_vars * mh_loss
+        if sample_constraint:
+            clean = torch.bernoulli(torch.ones(data.shape[0])/(1+dual_vars)).bool()
+            mh_data[clean] = data
+            preds = model(data)
+            loss = loss_fn(preds, label)
+            mh_loss = mh_loss.mean()
+        else:
+            preds = model(data)
+            clean_loss = loss_fn(preds, label)
+            mh_preds = model(mh_data)
+            mh_loss = loss_fn(mh_preds, label.repeat(C.get()['n_aug']))
+            # Primal descent
+            loss = clean_loss + dual_vars * mh_loss
         if optimizer:
             if communicate_grad:
                 loss.backward()
@@ -189,14 +203,24 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
         ##############################
         #print(f"Time for forward/backward {time()-fb_time}")
         top1, top5 = accuracy(preds, label, (1, 5))
-        metrics.add_dict({
-            'loss': loss.item() * len(data),
-            'aug loss': mh_loss.item() * len(data),
-            'top1': top1.item() * len(data),
-            'top5': top5.item() * len(data),
-            'dual': dual_vars.item()* len(data),
-            'acc ratio': acceptance_ratio.mean().item()* len(data),
-        })
+        if sample_constraint:
+            metrics.add_dict({
+                'loss': loss.item() * len(data),
+                'aug loss': mh_loss.item() * len(data),
+                'top1': top1.item() * len(data),
+                'top5': top5.item() * len(data),
+                'dual': dual_vars.item()* len(data),
+                'acc ratio': accepted_all.float().mean().item()*len(data),
+            })
+        else:
+            metrics.add_dict({
+                'loss': clean_loss.item() * len(data),
+                'aug loss': mh_loss.item() * len(data),
+                'top1': top1.item() * len(data),
+                'top5': top5.item() * len(data),
+                'dual': dual_vars.item()* len(data),
+                'acc ratio': accepted_all.float().mean().item()*len(data),
+            })
         if steps % 2 == 0:
             metrics.add('eval_top1', top1.item() * len(data)) # times 2 since it is only recorded every sec step
             eval_cnt += len(data)
@@ -300,32 +324,9 @@ def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, re
         )
     result = OrderedDict()
     epoch_start = 1
-    if save_path and os.path.exists(save_path):
-        logger.info('%s file found. loading...' % save_path)
-        data = torch.load(save_path, map_location='cpu')
-        if 'model' in data or 'state_dict' in data:
-            key = 'model' if 'model' in data else 'state_dict'
-            logger.info('checkpoint epoch@%d' % data['epoch'])
-            if C.get().get('load_main_model', False):
-                model.load_state_dict(data[key])
-                #if not isinstance(model, DataParallel):
-                    #model.load_state_dict({k.replace('module.', ''): v for k, v in data[key].items()})
-                #else:
-                    #model.load_state_dict({k if 'module.' in k else 'module.'+k: v for k, v in data[key].items()})
-                optimizer.load_state_dict(data['optimizer'])
-                if data['epoch'] < C.get()['epoch']:
-                    epoch_start = data['epoch'] + 1
-                else:
-                    only_eval = True
-        else:
-            #model.load_state_dict({k: v for k, v in data.items()})
-            raise ValueError(f"Wrong format of data in save path: {save_path}.")
-        del data
-    else:
-        logger.info('"%s" file not found. skip to pretrain weights...' % save_path)
-        if only_eval:
-            logger.warning('model checkpoint not found. only-evaluation mode is off.')
-        only_eval = False
+    if save_path:
+        Path(save_path).mkdir(parents=True, exist_ok=True)
+        save_path+=( f"/{C.get()['dataset']}_{C.get()['model']['type']}_{C.get()['aug']}_margin{C.get()['PD']['margin']}_seed{C.get()['seed']}.pkl")
 
     if only_eval:
         logger.info('evaluation only+')
@@ -344,7 +345,10 @@ def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, re
 
     # train loop
     best_top1 = 0
-    dual_vars = 0
+    if C.get()['n_aug']>1:
+        dual_vars = 1
+    else:
+        dual_vars = 0
     for epoch in range(epoch_start, max_epoch + 1):
         if worldsize > 1:
             trainsampler.set_epoch(epoch)
@@ -406,7 +410,13 @@ def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, re
         if early_finish_epoch == epoch:
             break
         if wandb_log:
-            wandb.log({"train": rs["train"].get_dict(),"test": rs["train"].get_dict(), "epoch":epoch, "dualvar": dual_vars})
+            if  epoch == max_epoch:
+                final_dict = {f"final {k}": v for k,v in result.items()}
+                wandb.log(final_dict)
+                if save_path and C.get().get('save_model', True):
+                    wandb.save()
+            else:
+                wandb.log({"train": rs["train"].get_dict(),"test": rs["test"].get_dict(), "epoch":epoch, "dualvar": dual_vars})
 
     del model
 
@@ -503,12 +513,7 @@ def spawn_process(global_rank, worldsize, port_suffix, args, config_path=None, c
     logger.info('elapsed time: %.3f Hours' % (elapsed / 3600.))
     logger.info('top1 error in testset: %.4f' % (1. - result['top1_test']))
     logger.info(args.save)
-    if worldsize:
-        cleanup()
 
-    if global_rank == 0 and communicate_results_with_queue is not None:
-        #communicate_results_with_queue.put([result])
-        communicate_results_with_queue.value = result['top1_test']
 
 
 
@@ -558,7 +563,5 @@ if __name__ == '__main__':
                               join=True)
         else:
             spawn_process(0, 0, None, parse_args())
-        with open(f'/tmp/samshpopt/training_with_portsuffix_{port_suffix}.pkl', 'r') as f:
-            result = pickle.load(f)
     else:
         spawn_process(None, -1, None, parse_args(), local_rank=args.local_rank)
