@@ -115,7 +115,6 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
         ###########################################
         for i in  range(1, mh_steps):
             iter_loader = iter(aug_loader)
-            #a = aug_stats.get_meter_from_loader(iter_loader)
             aug_data, _ , op, level = next(iter_loader)
             if worldsize > 1:
                 aug_data = aug_data.to(rank)
@@ -172,9 +171,12 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
         #   Primal Descent Step
         ##############################
         if sample_constraint:
-            clean = torch.bernoulli(torch.ones(data.shape[0])/(1+dual_vars)).bool()
-            mh_data[clean] = data
-            preds = model(data)
+            if isinstance(dual_vars, torch.Tensor):
+                clean = torch.bernoulli(torch.ones(data.shape[0])/(1+dual_vars.item())).bool()
+            else:
+                clean = torch.bernoulli(torch.ones(data.shape[0])/(1+dual_vars)).bool()
+            mh_data[clean] = data[clean]
+            preds = model(mh_data)
             loss = loss_fn(preds, label)
             mh_loss = mh_loss.mean()
         else:
