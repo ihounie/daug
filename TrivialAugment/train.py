@@ -23,6 +23,8 @@ from tqdm import tqdm
 import yaml
 from theconf import Config as C, ConfigArgumentParser
 from argparse import ArgumentParser
+import pandas as pd
+import wandb
 
 from TrivialAugment.common import get_logger
 from TrivialAugment.data import get_dataloaders
@@ -35,7 +37,7 @@ import aug_lib
 logger = get_logger('TrivialAugment')
 logger.setLevel(logging.DEBUG)
 
-def run_epoch(rank, worldsize, model, loader, loss_fn, optimizer, desc_default='', epoch=0, writer=None, verbose=1, scheduler=None,sample_pairing_loader=None):
+def run_epoch(rank, worldsize, model, loader, loss_fn, optimizer, desc_default='', epoch=0, writer=None, verbose=1, scheduler=None,sample_pairing_loader=None, wandb_log = False):
     tqdm_disable = bool(os.environ.get('TASK_NAME', ''))    # KakaoBrain Environment
     if verbose:
         logging_loader = tqdm(loader, disable=tqdm_disable)
@@ -129,7 +131,7 @@ def run_epoch(rank, worldsize, model, loader, loss_fn, optimizer, desc_default='
     return metrics
 
 
-def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, reporter=None, metric='last', save_path=None, only_eval=False):
+def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, reporter=None, metric='last', save_path=None, only_eval=False, wandb_log = False):
     if not reporter:
         reporter = lambda **kwargs: 0
 
@@ -193,7 +195,7 @@ def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, re
 
     result = OrderedDict()
     epoch_start = 1
-    if save_path and os.path.exists(save_path):
+    if save_path and os.path.exists(save_path) and os.path.isfile(save_path):
         logger.info('%s file found. loading...' % save_path)
         data = torch.load(save_path, map_location='cpu')
         if 'model' in data or 'state_dict' in data:
@@ -225,7 +227,7 @@ def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, re
         model.eval()
         rs = dict()
         with torch.no_grad():
-            rs['train'] = run_epoch(rank, worldsize, model, trainloader, criterion, None, desc_default='train', epoch=0, writer=writers[0])
+            rs['train'] = run_epoch(rank, worldsize, model, trainloader, criterion, None, desc_default='train', epoch=0, writer=writers[0], wandb_log = wandb_log)
             #rs['valid'] = run_epoch(rank, worldsize, model, validloader, criterion, None, desc_default='valid', epoch=0, writer=writers[1])
             rs['test'] = run_epoch(rank, worldsize, model, testloader_, criterion, None, desc_default='*test', epoch=0, writer=writers[2])
         for key, setname in itertools.product(['loss', 'top1', 'top5'], ['train', 'test']):
@@ -297,6 +299,16 @@ def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, re
         early_finish_epoch = C.get().get('early_finish_epoch', None)
         if early_finish_epoch == epoch:
             break
+        if wandb_log:
+            if  epoch == max_epoch:
+                final_dict = {f"final {k}": v for k,v in result.items()}
+                wandb.log(final_dict)
+                if save_path and C.get().get('save_model', True):
+                    wandb.save()
+            else:
+                wandb.log({"train": rs["train"].get_dict(), "epoch":epoch, "dualvar": dual_vars})
+                if epoch % 20 == 0:
+                    wandb.log({"test": rs["test"].get_dict(), "epoch":epoch})
 
     del model
 
@@ -328,6 +340,7 @@ def parse_args():
     parser.add_argument('--cv', type=int, default=0)
     parser.add_argument('--only-eval', action='store_true')
     parser.add_argument('--local_rank', default=None, type=int)
+    parser.add_argument('--wandb_log', action='store_true')
     return parser.parse_args()
 
 
@@ -342,6 +355,12 @@ def spawn_process(global_rank, worldsize, port_suffix, args, config_path=None, c
     #return
     if args.config is not None:
         C(args.config)
+
+    if args.wandb_log:
+        print("logging")
+        wandb.init(project=f"DAug-Gen", name=args.tag)
+        wandb.config.update(args)
+        wandb.config.update(C.get().flatten())
     
     C.get()['started_with_spawn'] = started_with_spawn
 
@@ -373,7 +392,7 @@ def spawn_process(global_rank, worldsize, port_suffix, args, config_path=None, c
 
     import time
     t = time.time()
-    result = train_and_eval(local_rank, worldsize, args.tag, args.dataroot, test_ratio=args.cv_ratio, cv_fold=args.cv, save_path=args.save, only_eval=args.only_eval, metric='last')
+    result = train_and_eval(local_rank, worldsize, args.tag, args.dataroot, test_ratio=args.cv_ratio, cv_fold=args.cv, save_path=args.save, only_eval=args.only_eval, metric='last', wandb_log=args.wandb_log)
     elapsed = time.time() - t
     print('done')
 
@@ -431,6 +450,7 @@ if __name__ == '__main__':
     if args.local_rank is None:
         print("Spawning processes")
         world_size = torch.cuda.device_count()
+        print("world size:", world_size)
         port_suffix = str(random.randint(10,99))
         if world_size > 1:
             outcome = mp.spawn(spawn_process,

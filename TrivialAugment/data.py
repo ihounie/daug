@@ -75,6 +75,24 @@ def dataset_with_transform_stats(cls, y="targets"):
             if self.target_transform is not None:
                 target = self.target_transform(target)
             return img, target, torch.tensor(op_num), torch.tensor(level)
+    if y=="targets-only":
+        def __getitem__(self, index):
+            img, target = self.data[index], self.targets[index]
+            # some datasets do not return a PIL Image
+            # and transforms assume a PIL Image as input
+            if not isinstance(img, Image.Image):
+                img = Image.fromarray(img)
+
+            if self.transform is not None:
+                for t in self.transform.transforms:
+                    if isinstance(t, UniAugmentWeighted):
+                        img, _, _ = t(img)
+                    else:
+                        img = t(img)
+
+            if self.target_transform is not None:
+                target = self.target_transform(target)
+            return img, target
     else:
         raise NotImplementedError
     return type(cls.__name__, (cls,), {
@@ -260,13 +278,15 @@ def get_dataloaders(dataset, batch, dataroot, split=0.15, split_idx=0, distribut
         if C.get()['aug'] == 'primaldual':
             total_trainset = dataset_with_indices(torchvision.datasets.CIFAR10)(root=dataroot, train=True, download=True, transform=transform_train)
             aug_trainset = dataset_with_transform_stats(torchvision.datasets.CIFAR10)(root=dataroot, train=True, download=True, transform=transform_aug)
+        else:
+            total_trainset = dataset_with_transform_stats(torchvision.datasets.CIFAR10, y = "targets-only")(root=dataroot, train=True, download=True, transform=transform_train)
         testset = torchvision.datasets.CIFAR10(root=dataroot, train=False, download=True, transform=transform_test)
     elif dataset in ('cifar100', 'pre_transform_cifar100'):
         if C.get()['aug'] == 'primaldual':
             total_trainset = dataset_with_indices(torchvision.datasets.CIFAR100)(root=dataroot, train=True, download=True, transform=transform_train)
             aug_trainset =  dataset_with_transform_stats(torchvision.datasets.CIFAR100)(root=dataroot, train=True, download=True, transform=transform_aug)
         else:
-            total_trainset = torchvision.datasets.CIFAR100(root=dataroot, train=True, download=True, transform=transform_train)
+            total_trainset = dataset_with_transform_stats(torchvision.datasets.CIFAR10, y = "targets-only")(root=dataroot, train=True, download=True, transform=transform_train)
         testset = torchvision.datasets.CIFAR100(root=dataroot, train=False, download=True, transform=transform_test)
     elif dataset == 'svhncore':
         if C.get()['aug'] == 'primaldual':
@@ -275,7 +295,7 @@ def get_dataloaders(dataset, batch, dataroot, split=0.15, split_idx=0, distribut
             aug_trainset =  dataset_with_transform_stats(torchvision.datasets.SVHN, y="labels")(root=dataroot, split='train', download=True,
                                                    transform=transform_aug)
         else:
-            total_trainset = torchvision.datasets.SVHN(root=dataroot, split='train', download=True,
+            total_trainset = dataset_with_transform_stats(torchvision.datasets.CIFAR10, y = "targets-only")(root=dataroot, split='train', download=True,
                                                    transform=transform_train)
         testset = torchvision.datasets.SVHN(root=dataroot, split='test', download=True, transform=transform_test)
     elif dataset == 'svhn':
