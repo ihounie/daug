@@ -75,7 +75,7 @@ def dataset_with_transform_stats(cls, y="targets"):
             if self.target_transform is not None:
                 target = self.target_transform(target)
             return img, target, torch.tensor(op_num), torch.tensor(level)
-    if y=="targets-only":
+    elif y=="targets-only":
         def __getitem__(self, index):
             img, target = self.data[index], self.targets[index]
             # some datasets do not return a PIL Image
