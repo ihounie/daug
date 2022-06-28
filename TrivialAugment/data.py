@@ -257,9 +257,9 @@ def get_dataloaders(dataset, batch, dataroot, split=0.15, split_idx=0, distribut
             transform_test = PILImageToHWCByteTensor()
 
     if dataset in ('cifar10', 'pre_transform_cifar10'):
-        total_trainset = torchvision.datasets.CIFAR10(root=dataroot, train=True, download=True, transform=transform_train)
         if C.get()['aug'] == 'primaldual':
-            aug_trainset = torchvision.datasets.CIFAR10(root=dataroot, train=True, download=True, transform=transform_aug)
+            total_trainset = dataset_with_indices(torchvision.datasets.CIFAR10)(root=dataroot, train=True, download=True, transform=transform_train)
+            aug_trainset = dataset_with_transform_stats(torchvision.datasets.CIFAR10)(root=dataroot, train=True, download=True, transform=transform_aug)
         testset = torchvision.datasets.CIFAR10(root=dataroot, train=False, download=True, transform=transform_test)
     elif dataset in ('cifar100', 'pre_transform_cifar100'):
         if C.get()['aug'] == 'primaldual':
