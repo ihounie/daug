@@ -88,7 +88,7 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
             optimizer.zero_grad()
 
         batch_subset = Subset(augmented_dset, indexes)
-        aug_loader = DataLoader(batch_subset, batch_size=indexes.shape[0], shuffle=False, num_workers=8, pin_memory=True,drop_last=False)
+        aug_loader = DataLoader(batch_subset, batch_size=indexes.shape[0], shuffle=False, num_workers=0, pin_memory=True,drop_last=False)
 
         ##########################################
         # Metropolis Hastings constraint sampling
