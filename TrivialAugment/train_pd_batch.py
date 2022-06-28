@@ -246,7 +246,7 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
             logger.info('[%s %03d/%03d] %s', desc_default, epoch, C.get()['epoch'], metrics.divide(cnt, eval_top1=eval_cnt))
 
     metrics = metrics.divide(cnt, eval_top1=eval_cnt)
-    if wandb_log:
+    if wandb_log and steps % 50 == 0:
         wandb.log(metrics.metrics)
         aug_stats.process()
         for op in aug_stats.transform_names:
