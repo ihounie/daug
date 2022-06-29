@@ -10,6 +10,7 @@ import pickle
 from dataclasses import dataclass
 import random
 from time import time
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -195,32 +196,9 @@ def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, re
 
     result = OrderedDict()
     epoch_start = 1
-    if save_path and os.path.exists(save_path) and os.path.isfile(save_path):
-        logger.info('%s file found. loading...' % save_path)
-        data = torch.load(save_path, map_location='cpu')
-        if 'model' in data or 'state_dict' in data:
-            key = 'model' if 'model' in data else 'state_dict'
-            logger.info('checkpoint epoch@%d' % data['epoch'])
-            if C.get().get('load_main_model', False):
-                model.load_state_dict(data[key])
-                #if not isinstance(model, DataParallel):
-                    #model.load_state_dict({k.replace('module.', ''): v for k, v in data[key].items()})
-                #else:
-                    #model.load_state_dict({k if 'module.' in k else 'module.'+k: v for k, v in data[key].items()})
-                optimizer.load_state_dict(data['optimizer'])
-                if data['epoch'] < C.get()['epoch']:
-                    epoch_start = data['epoch'] + 1
-                else:
-                    only_eval = True
-        else:
-            #model.load_state_dict({k: v for k, v in data.items()})
-            raise ValueError(f"Wrong format of data in save path: {save_path}.")
-        del data
-    else:
-        logger.info('"%s" file not found. skip to pretrain weights...' % save_path)
-        if only_eval:
-            logger.warning('model checkpoint not found. only-evaluation mode is off.')
-        only_eval = False
+    if save_path:
+        Path(save_path).mkdir(parents=True, exist_ok=True)
+        save_path+=( f"/{C.get()['dataset']}_{C.get()['model']['type']}_{C.get()['aug']}.pkl")
 
     if only_eval:
         logger.info('evaluation only+')
@@ -276,6 +254,7 @@ def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, re
 
                 # save checkpoint
                 if save_path and C.get().get('save_model', True) and (worldsize <= 1 or torch.distributed.get_rank() == 0):
+                    print("saveing checkpoint")
                     logger.info('save model@%d to %s' % (epoch, save_path))
                     torch.save({
                         'epoch': epoch,
@@ -306,7 +285,8 @@ def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, re
                 if save_path and C.get().get('save_model', True):
                     wandb.save()
             else:
-                wandb.log({"train": rs["train"].get_dict(), "epoch":epoch, "dualvar": dual_vars})
+                print("logging")
+                wandb.log({"train": rs["train"].get_dict(), "epoch":epoch})
                 if epoch % 20 == 0:
                     wandb.log({"test": rs["test"].get_dict(), "epoch":epoch})
 
@@ -356,7 +336,7 @@ def spawn_process(global_rank, worldsize, port_suffix, args, config_path=None, c
     if args.config is not None:
         C(args.config)
 
-    if args.wandb_log:
+    if args.wandb_log and global_rank == 0:
         print("logging")
         wandb.init(project=f"DAug-Gen", name=args.tag)
         wandb.config.update(args)
@@ -392,10 +372,15 @@ def spawn_process(global_rank, worldsize, port_suffix, args, config_path=None, c
 
     import time
     t = time.time()
-    result = train_and_eval(local_rank, worldsize, args.tag, args.dataroot, test_ratio=args.cv_ratio, cv_fold=args.cv, save_path=args.save, only_eval=args.only_eval, metric='last', wandb_log=args.wandb_log)
+    result = train_and_eval(local_rank, worldsize, args.tag, args.dataroot, test_ratio=args.cv_ratio, cv_fold=args.cv, save_path=args.save, only_eval=args.only_eval, metric='last', wandb_log=False)#args.wandb_log)
     elapsed = time.time() - t
     print('done')
-
+    if args.wandb_log and global_rank == 0:
+        print("logging")
+        final_dict = {f"final {k}": v for k,v in result.items()}
+        wandb.log(final_dict)
+        if save_path and C.get().get('save_model', True):
+            wandb.save()
     logger.info(f'done on rank {global_rank}.')
     logger.info('model: %s' % C.get()['model'])
     logger.info('augmentation: %s' % C.get()['aug'])
@@ -438,6 +423,7 @@ def run_from_py(dataroot, config_dict, save=''):
                                join=True)
         else:
             outcome = spawn_process(0, 0, port_suffix, args, path, result_queue)
+        
         #result = result_queue.get()[0]
         result = result_queue.value
     return result
