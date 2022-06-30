@@ -336,7 +336,7 @@ def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, re
         rs = dict()
         with torch.no_grad():
             rs['train'] = run_epoch(rank, worldsize, model, trainloader, criterion, None, desc_default='train', epoch=0, writer=writers[0])
-            #rs['valid'] = run_epoch(rank, worldsize, model, validloader, criterion, None, desc_default='valid', epoch=0, writer=writers[1])
+            rs['valid'] = run_epoch(rank, worldsize, model, validloader, criterion, None, desc_default='valid', epoch=0, writer=writers[1])
             rs['test'] = run_epoch(rank, worldsize, model, testloader_, criterion, None, desc_default='*test', epoch=0, writer=writers[2])
         for key, setname in itertools.product(['loss', 'top1', 'top5'], ['train', 'test']):
             if setname not in rs:
@@ -363,12 +363,12 @@ def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, re
         if math.isnan(rs['train']['loss']):
             raise Exception('train loss is NaN.')
 
-        if epoch % 20 == 0 or epoch == max_epoch:
+        if epoch == max_epoch:
             with torch.no_grad():
                 if C.get().get('compute_testtrain', False):
                     rs['testtrain'] = run_epoch(rank, worldsize, model, testtrainloader_, criterion, None, desc_default='testtrain', epoch=epoch, writer=writers[3], verbose=True)
                 rs['test'] = run_epoch(rank, worldsize, model, testloader_, criterion, None, desc_default='*test', epoch=epoch, writer=writers[2], verbose=True)
-
+                rs['valid'] = run_epoch(rank, worldsize, model, validloader, criterion, None, desc_default='valid', epoch=epoch, writer=writers[1], verbose=True)
 
             if metric == 'last' or rs[metric]['top1'] > best_top1:
                 if metric != 'last':
@@ -378,11 +378,11 @@ def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, re
                         result['%s_%s' % (key, setname)] = rs[setname][key]
                 result['epoch'] = epoch
 
-                #writers[1].add_scalar('valid_top1/best', rs['valid']['top1'], epoch)
+                writers[1].add_scalar('valid_top1/best', rs['valid']['top1'], epoch)
                 writers[2].add_scalar('test_top1/best', rs['test']['top1'], epoch)
 
                 reporter(
-                    loss_valid=rs['test']['loss'], top1_valid=rs['test']['top1'],
+                    loss_valid=rs['valid']['loss'], top1_valid=rs['valid']['top1'],
                     loss_test=rs['test']['loss'], top1_test=rs['test']['top1']
                 )
 
@@ -421,6 +421,8 @@ def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, re
                 wandb.log({"train": rs["train"].get_dict(), "epoch":epoch, "dualvar": dual_vars})
                 if epoch % 20 == 0:
                     wandb.log({"test": rs["test"].get_dict(), "epoch":epoch})
+                    wandb.log({"valid": rs["valid"].get_dict(), "epoch":epoch})
+
 
     del model
 
