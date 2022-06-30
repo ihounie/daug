@@ -42,7 +42,7 @@ from aug_lib import AugMeter
 logger = get_logger('TrivialAugment')
 logger.setLevel(logging.DEBUG)
 
-def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars, wandb_log = True, augmented_dset=None, desc_default='', epoch=0, writer=None, verbose=1, scheduler=None,sample_pairing_loader=None):
+def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars, wandb_log = True, augmented_dset=None, desc_default='', epoch=0, writer=None, verbose=1, scheduler=None,sample_pairing_loader=None, log_interval=100):
     tqdm_disable = bool(os.environ.get('TASK_NAME', ''))    # KakaoBrain Environment
     if verbose:
         logging_loader = tqdm(loader, disable=tqdm_disable)
@@ -246,7 +246,7 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
             logger.info('[%s %03d/%03d] %s', desc_default, epoch, C.get()['epoch'], metrics.divide(cnt, eval_top1=eval_cnt))
 
     metrics = metrics.divide(cnt, eval_top1=eval_cnt)
-    if wandb_log and steps % 50 == 0:
+    if wandb_log:
         wandb.log(metrics.metrics)
         aug_stats.process()
         for op in aug_stats.transform_names:
@@ -262,7 +262,7 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
     return metrics, dual_vars
 
 
-def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, reporter=None, metric='last', save_path=None, only_eval=False, wandb_log = False):
+def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, reporter=None, metric='last', save_path=None, only_eval=False, wandb_log = False, log_interval=40):
     if not reporter:
         reporter = lambda **kwargs: 0
 
@@ -363,7 +363,7 @@ def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, re
         if math.isnan(rs['train']['loss']):
             raise Exception('train loss is NaN.')
 
-        if epoch == max_epoch:
+        if epoch == max_epoch or epoch % log_interval == 0:
             with torch.no_grad():
                 if C.get().get('compute_testtrain', False):
                     rs['testtrain'] = run_epoch(rank, worldsize, model, testtrainloader_, criterion, None, desc_default='testtrain', epoch=epoch, writer=writers[3], verbose=True)
@@ -419,7 +419,7 @@ def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, re
                     wandb.save()
             else:
                 wandb.log({"train": rs["train"].get_dict(), "epoch":epoch, "dualvar": dual_vars})
-                if epoch % 20 == 0:
+                if epoch % log_interval == 0:
                     wandb.log({"test": rs["test"].get_dict(), "epoch":epoch})
                     wandb.log({"valid": rs["valid"].get_dict(), "epoch":epoch})
 
