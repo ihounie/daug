@@ -1,3 +1,4 @@
+import bisect
 import logging
 import os
 import random
@@ -30,9 +31,19 @@ def dataset_with_indices(cls):
     instead of just data, target.
     From https://discuss.pytorch.org/t/how-to-retrieve-the-sample-indices-of-a-mini-batch/7948/18
     """
-    def __getitem__(self, index):
-        data, target = cls.__getitem__(self, index)
-        return data, target, index
+    if cls == ConcatDataset:
+        def __getitem__(self, index):
+            dataset_idx = bisect.bisect_right(self.cumulative_sizes, index)
+            if dataset_idx == 0:
+                sample_idx = index
+            else:
+                sample_idx = index - self.cumulative_sizes[dataset_idx - 1]
+            data, target = self.datasets[dataset_idx][sample_idx]
+            return data, target, index
+    else:
+        def __getitem__(self, index):
+            data, target = cls.__getitem__(self, index)
+            return data, target, index
 
     return type(cls.__name__, (cls,), {
         '__getitem__': __getitem__,
@@ -295,19 +306,17 @@ def get_dataloaders(dataset, batch, dataroot, split=0.15, split_idx=0, distribut
             aug_trainset =  dataset_with_transform_stats(torchvision.datasets.SVHN, y="labels")(root=dataroot, split='train', download=True,
                                                    transform=transform_aug)
         else:
-            total_trainset = dataset_with_transform_stats(torchvision.datasets.CIFAR10, y = "targets-only")(root=dataroot, split='train', download=True,
+            total_trainset = dataset_with_transform_stats(torchvision.datasets.SVHN, y = "targets-only")(root=dataroot, split='train', download=True,
                                                    transform=transform_train)
         testset = torchvision.datasets.SVHN(root=dataroot, split='test', download=True, transform=transform_test)
     elif dataset == 'svhn':
         trainset = torchvision.datasets.SVHN(root=dataroot, split='train', download=True, transform=transform_train)
         extraset = torchvision.datasets.SVHN(root=dataroot, split='extra', download=True, transform=transform_train)
-        total_trainset = ConcatDataset([trainset, extraset])
+        total_trainset = dataset_with_indices(ConcatDataset)([trainset, extraset])
         if C.get()['aug'] == 'primaldual':
-            aug_t =  torchvision.datasets.SVHN(root=dataroot, split='train', download=True, transform=transform_aug)
-            aug_e =  torchvision.datasets.SVHN(root=dataroot, split='extra', download=True, transform=transform_aug)
-            total_trainset = ConcatDataset([aug_t, aug_e])
-            total_trainset.__name__ = "ConcatDataset"
-            aug_trainset = dataset_with_transform_stats(total_trainset)
+            aug_t =  dataset_with_transform_stats(torchvision.datasets.SVHN, y="labels")(root=dataroot, split='train', download=True, transform=transform_aug)
+            aug_e =  dataset_with_transform_stats(torchvision.datasets.SVHN, y="labels")(root=dataroot, split='extra', download=True, transform=transform_aug)
+            aug_trainset = ConcatDataset([aug_t, aug_e])
         testset = torchvision.datasets.SVHN(root=dataroot, split='test', download=True, transform=transform_test)
     elif dataset in ('imagenet', 'ohl_pipeline_imagenet', 'smallwidth_imagenet'):
         # Ignore archive only means to not to try to extract the files again, because they already are and the zip files
