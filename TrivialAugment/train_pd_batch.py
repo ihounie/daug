@@ -76,10 +76,7 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
             except StopIteration:
                 print("Blend images iterator ended. If this is printed twice per loop, there is something out-of-order.")
                 pass
-        if worldsize > 1:
-            data, label = data.to(rank), label.to(rank)
-        else:
-            data, label = data.to(f"cuda:{rank}"), label.to(f"cuda:{rank}")
+        data, label = data.to(f"cuda:{rank}"), label.to(f"cuda:{rank}")
 
 
         communicate_grad = steps % communicate_grad_every == 0
@@ -116,11 +113,7 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
         for i in  range(1, mh_steps):
             iter_loader = iter(aug_loader)
             aug_data, _ , op, level = next(iter_loader)
-            if worldsize > 1:
-                aug_data = aug_data.to(rank)
-            else:
-                aug_data = aug_data.cuda()
-
+            aug_data = aug_datato(f"cuda:{rank}")
             proposals[i*batch_size:(i+1)*batch_size] = aug_data
             ops[i*batch_size:(i+1)*batch_size] = op
             levels[i*batch_size:(i+1)*batch_size] = level

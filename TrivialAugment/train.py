@@ -70,17 +70,11 @@ def run_epoch(rank, worldsize, model, loader, loss_fn, optimizer, desc_default='
             except StopIteration:
                 print("Blend images iterator ended. If this is printed twice per loop, there is something out-of-order.")
                 pass
-        if worldsize > 1:
-            data, label = data.to(rank), label.to(rank)
-        else:
-            data, label = data.cuda(), label.cuda()
-
-
+        data, label = data.to(f"cuda:{rank}"), label.to(f"cuda:{rank}")
         communicate_grad = steps % communicate_grad_every == 0
         just_communicated_grad = steps % communicate_grad_every == 1 # also is true in first step of each epoch
         if optimizer and (communicate_grad_every == 1 or just_communicated_grad):
             optimizer.zero_grad()
-
         preds = model(data)
         loss = loss_fn(preds, label)
         if optimizer:
