@@ -79,7 +79,7 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
         if worldsize > 1:
             data, label = data.to(rank), label.to(rank)
         else:
-            data, label = data.cuda(), label.cuda()
+            data, label = data.to(f"cuda:{rank}"), label.to(f"cuda:{rank}")
 
 
         communicate_grad = steps % communicate_grad_every == 0
@@ -99,7 +99,7 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
         if worldsize > 1:
                 aug_data = aug_data.to(rank)
         else:
-            aug_data = aug_data.cuda()
+            aug_data = aug_data.to(f"cuda:{rank}")
         batch_size = aug_data.shape[0]
         chain_state = aug_data
         chain_op = op
@@ -284,7 +284,7 @@ def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, re
     if worldsize > 1:
         model = DDP(model.to(rank), device_ids=[rank])
     else:
-        model = model.to('cuda:0')
+        model = model.to(f"cuda:{rank}")
 
 
     criterion = nn.CrossEntropyLoss()
@@ -503,7 +503,7 @@ def spawn_process(global_rank, worldsize, port_suffix, args, config_path=None, c
         torch.cuda.manual_seed(seed)
         random.seed(seed)
         np.random.seed(seed)
-        torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.benchmark = False
 
 
     import time
@@ -557,17 +557,20 @@ def run_from_py(dataroot, config_dict, save=''):
 if __name__ == '__main__':
     pre_parser = ArgumentParser()
     pre_parser.add_argument('--local_rank', default=None, type=int)
+    pre_parser.add_argument('--distributed', action='store_true')
     args, _ = pre_parser.parse_known_args()
     if args.local_rank is None:
         print("Spawning processes")
         world_size = torch.cuda.device_count()
         port_suffix = str(random.randint(10,99))
-        if False:#world_size > 1:
+        if world_size > 1:
             outcome = mp.spawn(spawn_process,
                               args=(world_size,port_suffix,parse_args()),
                               nprocs=world_size,
                               join=True)
         else:
-            spawn_process(0, 0, None, parse_args())
-    else:
+            spawn_process(0, 0, None, parse_args())       
+    elif args.distributed:
         spawn_process(None, -1, None, parse_args(), local_rank=args.local_rank)
+    else:
+        spawn_process(2, 0, None, parse_args(), local_rank=args.local_rank)
