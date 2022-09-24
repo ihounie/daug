@@ -13,3 +13,5 @@ requests
 torch
 torchvision
 Pillow
+pandas
+wandb
