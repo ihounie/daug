@@ -1,5 +1,5 @@
 model:
-  type: wresnet40_2
+  type: wresnet28_10
 dataset: cifar10
 aug: primaldual
 randaug:
@@ -10,7 +10,7 @@ cutout: 16
 batch: 128
 gpus: 1
 n_aug: 1
-augmentation_search_space: wide_standard
+augmentation_search_space: fixed_standard
 epoch: 200
 lr: 0.1
 lr_schedule:
@@ -20,13 +20,10 @@ optimizer:
   nesterov: True
   decay: 0.0005
 MH:
-  steps_set: 
-       - 4
-       - 8
-       - 16
+  steps: 2
 PD:
   lr: 0.0001
-  margin: 0.8
+  margin: 0.6
   sample: False
 save_model: True
 seed_set: 
@@ -34,3 +31,4 @@ seed_set:
         - 1
         - 2
         - 3
+        - 4
