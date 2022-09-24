@@ -1,0 +1,41 @@
+model:
+  type: wresnet40_2
+dataset: cifar10
+aug: primaldual
+randaug:
+  N: 0
+  M: 0    # from appendix
+  weights: [0.0,1.0]
+cutout: 16
+batch: 128
+gpus: 1
+n_aug: 1
+augmentation_search_space: wide_standard
+epoch: 200
+lr: 0.1
+lr_schedule:
+  type: 'cosine'
+optimizer:
+  type: sgd
+  nesterov: True
+  decay: 0.0005
+MH:
+  steps: 1
+PD:
+  lr: 0.0001
+  margin_set: 
+            - 0.2
+            - 0.5
+            - 0.8
+            - 1.1
+            - 1.4
+            - 1.7
+sample: False
+save_model: True
+seed_set: 
+        - 0
+        - 1
+        - 2
+        - 3
+        - 4
+
