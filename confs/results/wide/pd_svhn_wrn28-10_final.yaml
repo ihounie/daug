@@ -1,6 +1,6 @@
 model:
   type: wresnet28_10
-dataset: svhn
+dataset: svhncore
 aug: primaldual
 randaug:
   N: 0
