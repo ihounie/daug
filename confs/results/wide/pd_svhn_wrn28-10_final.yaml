@@ -1,0 +1,35 @@
+model:
+  type: wresnet28_10
+dataset: svhn
+aug: primaldual
+randaug:
+  N: 0
+  M: 0    # from appendix
+  weights: [0.0,1.0]
+cutout: 16
+batch: 128
+gpus: 1
+n_aug: 1
+augmentation_search_space: wide_standard
+epoch: 200
+lr: 0.005
+lr_schedule:
+  type: 'cosine'
+optimizer:
+  type: sgd
+  nesterov: True
+  decay: 0.005
+MH:
+  steps: 2
+PD:
+  lr: 0.0001
+  margin: 0.2
+  sample: False
+save_model: True
+seed_set: 
+        - 0
+        - 1
+        - 2
+        - 3
+        - 4
+
