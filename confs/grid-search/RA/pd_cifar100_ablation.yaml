@@ -10,7 +10,7 @@ cutout: 16
 batch: 128
 gpus: 1
 n_aug: 1
-augmentation_search_space: wide_standard
+augmentation_search_space: fixed_standard
 epoch: 200
 lr: 0.1
 lr_schedule:
