@@ -24,12 +24,12 @@ MH:
 PD:
   lr: 0.0001
   margin_set:
-            - 0.3
             - 0.6
             - 0.9
             - 1.2
             - 1.5
             - 1.8
+            - 2.1
   sample: False
 save_model: True
 seed_set: 
