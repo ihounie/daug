@@ -20,7 +20,7 @@ optimizer:
   nesterov: True
   decay: 0.0005
 MH:
-  steps: 2
+  steps: 1
 PD:
   lr: 0.0001
   margin_set:
@@ -30,6 +30,8 @@ PD:
             - 1.5
             - 1.8
             - 2.1
+            - 2.4
+            - 2.7
   sample: False
 save_model: True
 seed_set: 
