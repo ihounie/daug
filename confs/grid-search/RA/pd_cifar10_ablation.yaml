@@ -10,7 +10,7 @@ cutout: 16
 batch: 128
 gpus: 1
 n_aug: 1
-augmentation_search_space: fixed_standard
+augmentation_search_space: wide_standard
 epoch: 200
 lr: 0.1
 lr_schedule:
@@ -24,9 +24,14 @@ MH:
 PD:
   lr: 0.0001
   margin_set:
-            - 0.6
-            - 0.4
+            - 0.2
+            - 0.5
             - 0.8
+            - 1.1
+            - 1.4
+            - 1.7
+            - 2.0
+            - 2.3
 sample: False
 save_model: True
 seed_set: 
