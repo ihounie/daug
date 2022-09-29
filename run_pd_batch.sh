@@ -1,1 +1,0 @@
-python -m TrivialAugment.train_pd_batch -c ./confs/pd_batch_cifar100.yaml --dataroot data --tag PD_batch_CIFAR100 --wandb_log

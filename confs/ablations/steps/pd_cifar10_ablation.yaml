@@ -1,6 +1,6 @@
 model:
   type: wresnet40_2
-dataset: cifar100
+dataset: cifar10
 aug: primaldual
 randaug:
   N: 0
@@ -20,17 +20,19 @@ optimizer:
   nesterov: True
   decay: 0.0005
 MH:
-  steps_set: 
-       - 4
-       - 8
-       - 16
+  steps_set:
+           - 2
+           - 4
+           - 8
+           - 16 
 PD:
   lr: 0.0001
-  margin: 2.1
-  sample: False
+  margin: 
+sample: False
 save_model: True
 seed_set: 
         - 0
         - 1
         - 2
         - 3
+

@@ -1,6 +1,6 @@
 model:
-  type: wresnet28_10
-dataset: cifar10
+  type: wresnet40_2
+dataset: cifar100
 aug: primaldual
 randaug:
   N: 0
@@ -10,7 +10,7 @@ cutout: 16
 batch: 128
 gpus: 1
 n_aug: 1
-augmentation_search_space: fixed_standard
+augmentation_search_space: wide_standard
 epoch: 200
 lr: 0.1
 lr_schedule:
@@ -23,12 +23,20 @@ MH:
   steps: 2
 PD:
   lr: 0.0001
-  margin: 1.2
+  margin_set:
+            - 0.3
+            - 0.6
+            - 0.9
+            - 1.2
+            - 1.5
+            - 1.8
+            - 2.1
+            - 2.4
+            - 2.7
   sample: False
 save_model: True
 seed_set: 
         - 0
         - 1
         - 2
-        - 3
-        - 4
+

@@ -1,5 +1,5 @@
 model:
-  type: wresnet28_10
+  type: wresnet40_2
 dataset: cifar10
 aug: primaldual
 randaug:
@@ -23,15 +23,15 @@ MH:
   steps: 2
 PD:
   lr: 0.0001
-  margin_set: 
-            - 0.15
-            - 0.45
-            - 0.75
-            - 1.05
-            - 1.35
-            - 1.65
-            - 1.95
-            - 2.25
+  margin_set:
+            - 0.2
+            - 0.5
+            - 0.8
+            - 1.1
+            - 1.4
+            - 1.7
+            - 2.0
+            - 2.3
 sample: False
 save_model: True
 seed_set: 

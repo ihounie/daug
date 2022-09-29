@@ -33,10 +33,21 @@ python -m TrivialAugment.train_pd_batch -c conf/{CONFIG_FILE}.yaml
 ```
 We have added the following parameters to config file for our algorithm:
 
+- MH:
+  - steps(int): Number of Metropolis hastings steps used to sample the worst case distribution ($\lambda^{\star}_c$)
+- PD:
+  lr: Dual Learning Rate
+  margin: ($\epsilon$)
+
 ## Paper Experiments
 
 ### Config Files
 Configuration files with all hyperparameters can be found on the folder `config`.
+To generate variants corresponding to an experiment (e.g. different seeds or margins) call:
+```
+python create_variants_of_set_config.py {Configuration file path} 1
+```
+
 Experiments are grouped in the following folders:
 
  - Ablations
