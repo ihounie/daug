@@ -328,11 +328,15 @@ def spawn_process(global_rank, worldsize, port_suffix, args, config_path=None, c
     #communicate_results_with_queue.value = 1.
     #return
     if args.config is not None:
-        C(args.config)
+        try:
+            C(args.config[0])
+            print("conf successfully loaded")
+        except:
+            print("theconf singleton error - ignore it")
 
     if args.wandb_log and global_rank == 0:
         print("logging")
-        wandb.init(project=f"DAug-Gen", name=args.tag)
+        wandb.init(project=f"Baselines-DAug", name=args.tag)
         wandb.config.update(args)
         wandb.config.update(C.get().flatten())
     
@@ -426,11 +430,11 @@ def run_from_py(dataroot, config_dict, save=''):
 if __name__ == '__main__':
     pre_parser = ArgumentParser()
     pre_parser.add_argument('--local_rank', default=None, type=int)
+    pre_parser.add_argument('--distributed', action='store_true')
     args, _ = pre_parser.parse_known_args()
     if args.local_rank is None:
         print("Spawning processes")
         world_size = torch.cuda.device_count()
-        print("world size:", world_size)
         port_suffix = str(random.randint(10,99))
         if world_size > 1:
             outcome = mp.spawn(spawn_process,
@@ -438,8 +442,8 @@ if __name__ == '__main__':
                               nprocs=world_size,
                               join=True)
         else:
-            spawn_process(0, 0, None, parse_args())
-        with open(f'/tmp/samshpopt/training_with_portsuffix_{port_suffix}.pkl', 'r') as f:
-            result = pickle.load(f)
-    else:
+            spawn_process(0, 0, None, parse_args())       
+    elif args.distributed:
         spawn_process(None, -1, None, parse_args(), local_rank=args.local_rank)
+    else:
+        spawn_process(2, 0, None, parse_args(), local_rank=args.local_rank)
