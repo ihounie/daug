@@ -334,7 +334,7 @@ def spawn_process(global_rank, worldsize, port_suffix, args, config_path=None, c
         except:
             print("theconf singleton error - ignore it")
 
-    if args.wandb_log and global_rank == 0:
+    if args.wandb_log:
         print("logging")
         wandb.init(project=f"Baselines-DAug", name=args.tag)
         wandb.config.update(args)
@@ -365,15 +365,15 @@ def spawn_process(global_rank, worldsize, port_suffix, args, config_path=None, c
         torch.cuda.manual_seed(seed)
         random.seed(seed)
         np.random.seed(seed)
-        #torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.benchmark = False
 
 
     import time
     t = time.time()
-    result = train_and_eval(local_rank, worldsize, args.tag, args.dataroot, test_ratio=args.cv_ratio, cv_fold=args.cv, save_path=args.save, only_eval=args.only_eval, metric='last', wandb_log=False)#args.wandb_log)
+    result = train_and_eval(local_rank, worldsize, args.tag, args.dataroot, test_ratio=args.cv_ratio, cv_fold=args.cv, save_path=args.save, only_eval=args.only_eval, metric='last', wandb_log=args.wandb_log)#)
     elapsed = time.time() - t
     print('done')
-    if args.wandb_log and global_rank == 0:
+    if args.wandb_log:
         print("logging")
         final_dict = {f"final {k}": v for k,v in result.items()}
         wandb.log(final_dict)

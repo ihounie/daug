@@ -1,7 +1,7 @@
 model:
   type: wresnet28_10
 dataset: svhncore
-aug: primaldual
+aug: randaugment
 randaug:
   N: 0
   M: 0    # from appendix

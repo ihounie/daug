@@ -1,6 +1,6 @@
 model:
   type: wresnet28_10
-dataset: cifar100
+dataset: svhncore
 aug: randaugment
 randaug:
   N: 0
@@ -12,13 +12,19 @@ gpus: 1
 n_aug: 1
 augmentation_search_space: fixed_standard
 epoch: 200
-lr: 0.1
+lr: 0.005
 lr_schedule:
   type: 'cosine'
 optimizer:
   type: sgd
   nesterov: True
-  decay: 0.0005
+  decay: 0.005
+MH:
+  steps: 2
+PD:
+  lr: 0.0001
+  margin: 0.2
+  sample: False
 save_model: True
 seed_set: 
         - 0
@@ -26,4 +32,4 @@ seed_set:
         - 2
         - 3
         - 4
-        - 5
+
