@@ -306,7 +306,7 @@ def get_dataloaders(dataset, batch, dataroot, split=0.15, split_idx=0, distribut
             aug_trainset =  dataset_with_transform_stats(torchvision.datasets.SVHN, y="labels")(root=dataroot, split='train', download=True,
                                                    transform=transform_aug)
         else:
-            total_trainset = dataset_with_transform_stats(torchvision.datasets.SVHN, y = "targets-only")(root=dataroot, split='train', download=True,
+            total_trainset = dataset_with_transform_stats(torchvision.datasets.SVHN, y = "labels")(root=dataroot, split='train', download=True,
                                                    transform=transform_train)
         testset = torchvision.datasets.SVHN(root=dataroot, split='test', download=True, transform=transform_test)
     elif dataset == 'svhn':
