@@ -297,7 +297,7 @@ def get_dataloaders(dataset, batch, dataroot, split=0.15, split_idx=0, distribut
             total_trainset = dataset_with_indices(torchvision.datasets.CIFAR100)(root=dataroot, train=True, download=True, transform=transform_train)
             aug_trainset =  dataset_with_transform_stats(torchvision.datasets.CIFAR100)(root=dataroot, train=True, download=True, transform=transform_aug)
         else:
-            total_trainset = dataset_with_transform_stats(torchvision.datasets.CIFAR10, y = "targets-only")(root=dataroot, train=True, download=True, transform=transform_train)
+            total_trainset = dataset_with_transform_stats(torchvision.datasets.CIFAR100, y = "targets-only")(root=dataroot, train=True, download=True, transform=transform_train)
         testset = torchvision.datasets.CIFAR100(root=dataroot, train=False, download=True, transform=transform_test)
     elif dataset == 'svhncore':
         if C.get()['aug'] == 'primaldual':
