@@ -55,7 +55,6 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
     eval_cnt = 0
     total_steps = len(loader)
     steps = 0
-    sample_constraint = C.get()['PD'].get('sample')
 
     gc.collect()
     torch.cuda.empty_cache()
@@ -159,26 +158,12 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
             mh_ops = torch.flatten(mh_ops, start_dim=0, end_dim=1)
             mh_levels = torch.flatten(mh_levels, start_dim=0, end_dim=1)
             aug_stats.update(mh_ops, mh_levels)
-
-        ##############################
-        #   Primal Descent Step
-        ##############################
-        if sample_constraint:
-            if isinstance(dual_vars, torch.Tensor):
-                clean = torch.bernoulli(torch.ones(data.shape[0])/(1+dual_vars.item())).bool()
-            else:
-                clean = torch.bernoulli(torch.ones(data.shape[0])/(1+dual_vars)).bool()
-            mh_data[clean] = data[clean]
-            preds = model(mh_data)
-            loss = loss_fn(preds, label)
-            mh_loss = mh_loss.mean()
-        else:
-            preds = model(data)
-            clean_loss = loss_fn(preds, label)
-            mh_preds = model(mh_data)
-            mh_loss = loss_fn(mh_preds, label.repeat(C.get()['n_aug']))
-            # Primal descent
-            loss = clean_loss + dual_vars * mh_loss
+        preds = model(data)
+        clean_loss = loss_fn(preds, label)
+        mh_preds = model(mh_data)
+        mh_loss = loss_fn(mh_preds, label.repeat(C.get()['n_aug']))
+        # Primal descent
+        loss = clean_loss + mh_loss
         if optimizer:
             if communicate_grad:
                 loss.backward()
@@ -190,32 +175,16 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
                 nn.utils.clip_grad_norm_(model.parameters(), C.get()['optimizer'].get('clip', 5))
             if (steps-1) % C.get().get('step_optimizer_every', 1) == C.get().get('step_optimizer_nth_step', 0): # default is to step on the first step of each pack
                 optimizer.step()
-        ##############################
-        #   Dual Ascent Step
-        ##############################
-        with torch.no_grad():
-            dual_vars = relu(dual_vars + C.get()['PD'].get('lr') * (mh_loss.detach() - C.get()['PD'].get('margin')))
-        ##############################
-        #print(f"Time for forward/backward {time()-fb_time}")
-        top1, top5 = accuracy(preds, label, (1, 5))
-        if sample_constraint:
-            metrics.add_dict({
-                'loss': loss.item() * len(data),
-                'aug loss': mh_loss.item() * len(data),
-                'top1': top1.item() * len(data),
-                'top5': top5.item() * len(data),
-                'dual': dual_vars.item()* len(data),
-                'acc ratio': accepted_all.float().mean().item()*len(data),
-            })
-        else:
-            metrics.add_dict({
-                'loss': clean_loss.item() * len(data),
-                'aug loss': mh_loss.item() * len(data),
-                'top1': top1.item() * len(data),
-                'top5': top5.item() * len(data),
-                'dual': dual_vars.item()* len(data),
-                'acc ratio': accepted_all.float().mean().item()*len(data),
-            })
+
+        top1, top5 = accuracy(mh_preds, label, (1, 5))
+        metrics.add_dict({
+            'loss': mh_loss.item() * len(data),
+            'aug loss': mh_loss.item() * len(data),
+            'top1': top1.item() * len(data),
+            'top5': top5.item() * len(data),
+            'dual': dual_vars* len(data),
+            'acc ratio': accepted_all.float().mean().item()*len(data),
+        })
         if steps % 2 == 0:
             metrics.add('eval_top1', top1.item() * len(data)) # times 2 since it is only recorded every sec step
             eval_cnt += len(data)
@@ -230,7 +199,7 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
             scheduler.step(epoch - 1 + float(steps) / total_steps)
 
         #before_load_time = time()
-        del preds, loss, top1, top5, data, label
+        del mh_preds, loss, top1, top5, data, label
 
     if tqdm_disable:
         if optimizer:
@@ -321,7 +290,7 @@ def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, re
     epoch_start = 1
     if save_path:
         Path(save_path).mkdir(parents=True, exist_ok=True)
-        save_path+=( f"/{C.get()['dataset']}_{C.get()['model']['type']}_{C.get()['aug']}_margin{C.get()['PD']['margin']}_seed{C.get()['seed']}.pkl")
+        save_path+=( f"/{C.get()['dataset']}_{C.get()['model']['type']}_{C.get()['aug']}_ADV_seed{C.get()['seed']}.pkl")
 
     if only_eval:
         logger.info('evaluation only+')
@@ -448,7 +417,6 @@ def parse_args():
     parser.add_argument('--only-eval', action='store_true')
     parser.add_argument('--local_rank', default=None, type=int)
     parser.add_argument('--wandb_log', action='store_true')
-    parser.add_argument('--project', type=str, default='Daug-Gen', help='wandb project')
     return parser.parse_args()
 
 
@@ -469,7 +437,7 @@ def spawn_process(global_rank, worldsize, port_suffix, args, config_path=None, c
             print("theconf singleton error - ignore it")
     if args.wandb_log:
         print("logging")
-        wandb.init(project=args.project, name=args.tag)
+        wandb.init(project=f"DAug-Gen-adv", name=args.tag)
         wandb.config.update(args)
         wandb.config.update(C.get().flatten())
     C.get()['started_with_spawn'] = started_with_spawn
