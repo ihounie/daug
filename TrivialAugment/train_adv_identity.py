@@ -417,6 +417,7 @@ def parse_args():
     parser.add_argument('--only-eval', action='store_true')
     parser.add_argument('--local_rank', default=None, type=int)
     parser.add_argument('--wandb_log', action='store_true')
+    parser.add_argument('--project', type=str, default='Daug-Gen', help='wandb project')
     return parser.parse_args()
 
 
@@ -437,7 +438,7 @@ def spawn_process(global_rank, worldsize, port_suffix, args, config_path=None, c
             print("theconf singleton error - ignore it")
     if args.wandb_log:
         print("logging")
-        wandb.init(project=f"DAug-Gen-adv", name=args.tag)
+        wandb.init(project=args.project, name=args.tag)
         wandb.config.update(args)
         wandb.config.update(C.get().flatten())
     C.get()['started_with_spawn'] = started_with_spawn
