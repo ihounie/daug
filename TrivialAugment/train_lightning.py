@@ -72,11 +72,11 @@ class ImageNetLightningModel(pl.LightningModule):
         self.log("dual_lr", self.dual_lr)
 
     def dual_lr_scheduler_step(self):
-        if self.current_step<3:
+        if self.current_epoch<3:
             self.dual_lr = self.max_lr/(250-self.current_step*50)
-        elif self.current_step<100:
+        elif self.current_epoch<100:
             self.dual_lr = self.max_lr/(100-self.current_step)
-        elif self.current_step>180:
+        elif self.current_epoch>180:
             self.dual_lr = 180*self.max_lr/(self.current_step)
         
 
@@ -171,7 +171,7 @@ def train_and_eval(dataroot,num_workers=1, test_ratio=0.0, cv_fold=0, logger=Non
     # create a model & an optimizer
     model = get_model(C.get()['model'], C.get()['batch'], num_class(C.get()['dataset']))
     pl_model = ImageNetLightningModel(mh_steps=C.get()['MH']['steps'], batch_size= C.get()['batch'], model=model.to(memory_format=torch.channels_last))
-    trainer = pl.Trainer(gpus=1, precision=16, accumulate_grad_batches=int(2048/(C.get()['batch'])), logger=logger, limit_train_batches=0.001)
+    trainer = pl.Trainer(gpus=1, precision=16, accumulate_grad_batches=int(2048/(C.get()['batch'])), logger=logger)
     trainer.validate(pl_model, datasets)
     trainer.fit(pl_model, datasets)
     return
