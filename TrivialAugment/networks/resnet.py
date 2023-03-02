@@ -1,13 +1,14 @@
 # Original code: https://github.com/pytorch/vision/blob/master/torchvision/models/resnet.py
 
 import torch.nn as nn
+import torch
 import math
 
 
 def conv3x3(in_planes, out_planes, stride=1):
     "3x3 convolution with padding"
-    return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
-                     padding=1, bias=False)
+    return torch.jit.script(nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
+                     padding=1, bias=False))
 
 
 class BasicBlock(nn.Module):
@@ -41,7 +42,6 @@ class BasicBlock(nn.Module):
         out = self.relu(out)
 
         return out
-
 
 class Bottleneck(nn.Module):
     expansion = 4

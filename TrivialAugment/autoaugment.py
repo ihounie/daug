@@ -24,21 +24,23 @@ import numpy as np
 # pylint:disable=g-multiple-import
 from PIL import ImageOps, ImageEnhance, ImageFilter, Image
 # pylint:enable=g-multiple-import
-
+from numba import jit
 
 IMAGE_SIZE = 32
 # What is the dataset mean and std of the images on the training set
 PARAMETER_MAX = 30  # What is the max 'level' a transform could be predicted
 
+@jit
 def pil_wrap(img):
   """Convert the `img` numpy tensor to a PIL Image."""
   return img.convert('RGBA')
 
-
+@jit
 def pil_unwrap(img):
   """Converts the PIL img to a numpy array."""
   return img.convert('RGB')
 
+@jit
 def apply_policy(policy, img, use_fixed_posterize=False):
   """Apply the `policy` to the numpy `img`.
 
@@ -61,14 +63,14 @@ def apply_policy(policy, img, use_fixed_posterize=False):
     pil_img = xform_fn(pil_img)
   return pil_unwrap(pil_img)
 
-
+@jit
 def random_flip(x):
   """Flip the input x horizontally with 50% probability."""
   if np.random.rand(1)[0] > 0.5:
     return np.fliplr(x)
   return x
 
-
+@jit
 def zero_pad_and_crop(img, amount=4):
   """Zero pad by `amount` zero pixels on each side then take a random crop.
 
@@ -89,12 +91,7 @@ def zero_pad_and_crop(img, amount=4):
   new_img = padded_img[top:top + img.shape[0], left:left + img.shape[1], :]
   return new_img
 
-
-
-
-
-
-
+@jit
 def float_parameter(level, maxval):
   """Helper function to scale `val` between 0 and maxval .
 
@@ -122,9 +119,6 @@ def int_parameter(level, maxval):
   """
   return int(level * maxval / PARAMETER_MAX)
 
-
-
-
 class TransformFunction(object):
   """Wraps the Transform function for pretty printing options."""
 
@@ -135,6 +129,7 @@ class TransformFunction(object):
   def __repr__(self):
     return '<' + self.name + '>'
 
+  @jit
   def __call__(self, pil_img):
     return self.f(pil_img)
 
@@ -147,7 +142,7 @@ class TransformT(object):
     self.xform = xform_fn
 
   def pil_transformer(self, probability, level):
-
+    @jit
     def return_function(im):
       if random.random() < probability:
         im = self.xform(im, level)
@@ -155,7 +150,7 @@ class TransformT(object):
 
     name = self.name + '({:.1f},{})'.format(probability, level)
     return TransformFunction(return_function, name)
-
+  @jit
   def do_transform(self, image, level):
     f = self.pil_transformer(PARAMETER_MAX, level)
     return f(image)
@@ -189,7 +184,7 @@ smooth = TransformT(
     'Smooth',
     lambda pil_img, level: pil_img.filter(ImageFilter.SMOOTH))
 
-
+@jit
 def _rotate_impl(pil_img, level):
   """Rotates `pil_img` from -30 to 30 degrees depending on `level`."""
   degrees = int_parameter(level, 30)
@@ -200,7 +195,7 @@ def _rotate_impl(pil_img, level):
 
 rotate = TransformT('Rotate', _rotate_impl)
 
-
+@jit
 def _posterize_impl(pil_img, level):
   """Applies PIL Posterize to `pil_img`."""
   level = int_parameter(level, 4)
@@ -208,7 +203,7 @@ def _posterize_impl(pil_img, level):
 
 
 posterize = TransformT('Posterize', _posterize_impl)
-
+@jit
 def _fixed_posterize_impl(pil_img, level):
   """Applies PIL Posterize to `pil_img`."""
   level = int_parameter(level, 4)
@@ -216,7 +211,7 @@ def _fixed_posterize_impl(pil_img, level):
 
 fixed_posterize = TransformT('Posterize', _fixed_posterize_impl)
 
-
+@jit
 def _shear_x_impl(pil_img, level):
   """Applies PIL ShearX to `pil_img`.
 
@@ -239,7 +234,7 @@ def _shear_x_impl(pil_img, level):
 
 shear_x = TransformT('ShearX', _shear_x_impl)
 
-
+@jit
 def _shear_y_impl(pil_img, level):
   """Applies PIL ShearY to `pil_img`.
 
@@ -262,7 +257,7 @@ def _shear_y_impl(pil_img, level):
 
 shear_y = TransformT('ShearY', _shear_y_impl)
 
-
+@jit
 def _translate_x_impl(pil_img, level):
   """Applies PIL TranslateX to `pil_img`.
 
@@ -285,7 +280,7 @@ def _translate_x_impl(pil_img, level):
 
 translate_x = TransformT('TranslateX', _translate_x_impl)
 
-
+@jit
 def _translate_y_impl(pil_img, level):
   """Applies PIL TranslateY to `pil_img`.
 
@@ -308,7 +303,7 @@ def _translate_y_impl(pil_img, level):
 
 translate_y = TransformT('TranslateY', _translate_y_impl)
 
-
+@jit
 def _crop_impl(pil_img, level, interpolation=Image.BILINEAR):
   """Applies a crop to `pil_img` with the size depending on the `level`."""
   cropped = pil_img.crop((level, level, IMAGE_SIZE - level, IMAGE_SIZE - level))
@@ -318,7 +313,7 @@ def _crop_impl(pil_img, level, interpolation=Image.BILINEAR):
 
 crop_bilinear = TransformT('CropBilinear', _crop_impl)
 
-
+@jit
 def _solarize_impl(pil_img, level):
   """Applies PIL Solarize to `pil_img`.
 
@@ -354,6 +349,7 @@ brightness = TransformT('Brightness', _enhancer_impl(
     ImageEnhance.Brightness))
 sharpness = TransformT('Sharpness', _enhancer_impl(ImageEnhance.Sharpness))
 
+@jit
 def create_cutout_mask(img_height, img_width, num_channels, size):
   """Creates a zero mask used for cutout of shape `img_height` x `img_width`.
 
@@ -391,6 +387,7 @@ def create_cutout_mask(img_height, img_width, num_channels, size):
       zeros)
   return mask, upper_coord, lower_coord
 
+@jit
 def _cutout_pil_impl(pil_img, level):
   """Apply cutout to pil_img at the specified level."""
   size = int_parameter(level, 20)

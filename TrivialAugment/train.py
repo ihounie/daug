@@ -432,7 +432,7 @@ if __name__ == '__main__':
     pre_parser.add_argument('--local_rank', default=None, type=int)
     pre_parser.add_argument('--distributed', action='store_true')
     args, _ = pre_parser.parse_known_args()
-    if args.local_rank is None:
+    if False:#args.local_rank is None:
         print("Spawning processes")
         world_size = torch.cuda.device_count()
         port_suffix = str(random.randint(10,99))
