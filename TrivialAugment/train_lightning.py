@@ -73,11 +73,11 @@ class ImageNetLightningModel(pl.LightningModule):
 
     def dual_lr_scheduler_step(self):
         if self.current_epoch<3:
-            self.dual_lr = self.max_lr/(250-self.current_step*50)
+            self.dual_lr = self.max_lr/(250-self.current_epoch*50)
         elif self.current_epoch<100:
-            self.dual_lr = self.max_lr/(100-self.current_step)
+            self.dual_lr = self.max_lr/(100-self.current_epoch)
         elif self.current_epoch>180:
-            self.dual_lr = 180*self.max_lr/(self.current_step)
+            self.dual_lr = 180*self.max_lr/(self.current_epoch)
         
 
     def training_step(self, batch, batch_idx):
