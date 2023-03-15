@@ -56,6 +56,7 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
     total_steps = len(loader)
     steps = 0
     sample_constraint = C.get()['PD'].get('sample')
+    n_aug = C.get()['n_aug']
 
     gc.collect()
     torch.cuda.empty_cache()
@@ -98,19 +99,16 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
         else:
             aug_data = aug_data.to(f"cuda:{rank}")
         batch_size = aug_data.shape[0]
-        chain_state = aug_data
-        chain_op = op
-        chain_level = level
-        proposals = torch.empty([batch_size*mh_steps]+list(aug_data.shape[1:]), device = aug_data.device, dtype= aug_data.dtype)
-        ops = torch.empty([batch_size*mh_steps], device = op.device, dtype= op.dtype)
-        levels = torch.empty([batch_size*mh_steps], device = level.device, dtype= level.dtype)
+        proposals = torch.empty([batch_size*mh_steps*n_aug]+list(aug_data.shape[1:]), device = aug_data.device, dtype= aug_data.dtype)
+        ops = torch.empty([batch_size*mh_steps*n_aug], device = op.device, dtype= op.dtype)
+        levels = torch.empty([batch_size*mh_steps*n_aug], device = level.device, dtype= level.dtype)
         proposals[0:batch_size] = aug_data
         ops[0:batch_size] = op
         levels[0:batch_size] = level
         ###########################################
         #   Compute Proposal Losses
         ###########################################
-        for i in  range(1, mh_steps):
+        for i in  range(1, mh_steps*n_aug):
             iter_loader = iter(aug_loader)
             aug_data, _ , op, level = next(iter_loader)
             aug_data = aug_data.to(f"cuda:{rank}")
@@ -118,30 +116,36 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
             ops[i*batch_size:(i+1)*batch_size] = op
             levels[i*batch_size:(i+1)*batch_size] = level
         with torch.no_grad():
-            proposal_loss = cross_entropy(model(proposals), label.repeat(mh_steps), reduction="none")
+            proposal_loss = cross_entropy(model(proposals), label.repeat(mh_steps*n_aug), reduction="none")
         ##################################
-        #   Build MC chain
+        #   Build MC chains
         ##################################
-            proposals = proposals.reshape([mh_steps]+list(aug_data.shape))
+            proposals = proposals.reshape([mh_steps, n_aug]+list(aug_data.shape))
             mh_data = torch.empty_like(proposals)
             mh_data[0] = proposals[0]
-            proposal_loss = proposal_loss.reshape([mh_steps, batch_size])
+            proposal_loss = proposal_loss.reshape([mh_steps,n_aug,  batch_size])
             mh_loss =  torch.empty_like(proposal_loss)
             mh_loss[0] = proposal_loss[0]
-            ops = ops.reshape([mh_steps, batch_size])
-            levels = levels.reshape([mh_steps, batch_size])
+            ops = ops.reshape([mh_steps, n_aug, batch_size])
+            levels = levels.reshape([mh_steps, n_aug, batch_size])
             mh_ops = torch.empty_like(ops)
             mh_levels = torch.empty_like(levels)
             mh_ops[0] = ops[0]
             mh_levels[0] = levels[0]
             last_loss = proposal_loss[0]
             ones = torch.ones_like(last_loss)
-            accepted_all = torch.empty([mh_steps-1, batch_size], device=last_loss.device, dtype=torch.bool)
+            accepted_all = torch.empty([mh_steps-1, n_aug, batch_size], device=last_loss.device, dtype=torch.bool)
+            chain_state = mh_data[0]
+            chain_op = ops[0]
+            chain_level = levels[0]
             for i in  range(1, mh_steps):
                 acceptance_ratio = torch.minimum(torch.nan_to_num(proposal_loss[i] / last_loss), ones)
                 acceptance_ratio =  acceptance_ratio * (acceptance_ratio > 0)
                 accepted = torch.bernoulli(acceptance_ratio).bool()
                 accepted_all[i-1] = accepted
+                #print("accepted", accepted.shape)
+                #print("proposals", proposals.shape)
+                #print("chain state", chain_state.shape)
                 chain_state[accepted] = proposals[i][accepted]
                 chain_op[accepted] = ops[i][accepted]
                 chain_level[accepted] = levels[i][accepted]
@@ -151,10 +155,11 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
                 mh_levels[i] = chain_level
                 mh_loss[i] = last_loss
             # Keep last Samples
-            mh_data = mh_data[-C.get()['n_aug']:]
-            mh_ops = mh_ops[-C.get()['n_aug']:]
-            mh_levels = mh_levels[-C.get()['n_aug']:]
-            mh_loss = mh_loss[-C.get()['n_aug']:]
+            mh_data = mh_data[-1]
+            mh_ops = mh_ops[-1]
+            mh_levels = mh_levels[-1]
+            mh_loss = mh_loss[-1]
+            #print("mh",  mh_loss.shape)
             mh_data = torch.flatten(mh_data, start_dim=0, end_dim=1)
             mh_ops = torch.flatten(mh_ops, start_dim=0, end_dim=1)
             mh_levels = torch.flatten(mh_levels, start_dim=0, end_dim=1)
@@ -176,7 +181,7 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
             preds = model(data)
             clean_loss = loss_fn(preds, label)
             mh_preds = model(mh_data)
-            mh_loss = loss_fn(mh_preds, label.repeat(C.get()['n_aug']))
+            mh_loss = loss_fn(mh_preds, label.repeat(n_aug))
             # Primal descent
             loss = clean_loss + dual_vars * mh_loss
         if optimizer:
