@@ -72,8 +72,8 @@ def num_class(dataset):
         'svhn': 10,
         'svhncore': 10,
         'reduced_svhn': 10,
-        'imagenet': 1000,
-        'smallwidth_imagenet': 1000,
-        'ohl_pipeline_imagenet': 1000,
+        'imagenet': 100,
+        'smallwidth_imagenet': 100,
+        'ohl_pipeline_imagenet': 100,
         'reduced_imagenet': 120,
     }[dataset]

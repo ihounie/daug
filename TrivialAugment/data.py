@@ -106,9 +106,14 @@ def dataset_with_transform_stats(cls, y="targets"):
             return img, target
     else:
         raise NotImplementedError
-    return type(cls.__name__, (cls,), {
-        '__getitem__': __getitem__,
-    })
+    if hasattr(cls, "__name__"):
+        return type(cls.__name__, (cls,), {
+            '__getitem__': __getitem__,
+        })
+    else:
+        return type("ImageNet", (cls,), {
+            '__getitem__': __getitem__,
+        }) 
 
 logger = get_logger('TrivialAugment')
 logger.setLevel(logging.INFO)
@@ -321,10 +326,10 @@ def get_dataloaders(dataset, batch, dataroot, split=0.15, split_idx=0, distribut
     elif dataset in ('imagenet', 'ohl_pipeline_imagenet', 'smallwidth_imagenet'):
         # Ignore archive only means to not to try to extract the files again, because they already are and the zip files
         # are not there no more
-        total_trainset = ImageNet(root=os.path.join(dataroot, 'imagenet-pytorch'), transform=transform_train, ignore_archive=True)
+        total_trainset = ImageNet(root=dataroot, transform=transform_train, with_indexes=True, frac_samples = C.get()["frac_samples"])
         if C.get()['aug'] == 'primaldual':
-            aug_trainset = dataset_with_transform_stats(ImageNet(root=os.path.join(dataroot, 'imagenet-pytorch'), transform=transform_aug, ignore_archive=True))
-        testset = ImageNet(root=os.path.join(dataroot, 'imagenet-pytorch'), split='val', transform=transform_test, ignore_archive=True)
+            aug_trainset = ImageNet(root=dataroot, transform=transform_aug, with_stats=True, frac_samples = C.get()["frac_samples"])
+        testset = ImageNet(root=dataroot, split='val', transform=transform_test, frac_samples = 1)
 
         # compatibility
         total_trainset.targets = [lb for _, lb in total_trainset.samples]

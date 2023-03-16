@@ -1,4 +1,8 @@
-from torchvision.datasets.imagenet import *
+from torchvision.datasets import ImageFolder
+import os
+from shutil import copytree
+from aug_lib import UniAugmentWeighted
+import torch
 
 class ImageNet(ImageFolder):
     """`ImageNet <http://image-net.org/>`_ 2012 Classification Dataset.
@@ -26,47 +30,62 @@ class ImageNet(ImageFolder):
         This allows us to only copy the unzipped files before training.
     """
 
-    def __init__(self, root, split='train', download=None, ignore_archive=False, **kwargs):
-        if download is True:
-            msg = ("The dataset is no longer publicly accessible. You need to "
-                   "download the archives externally and place them in the root "
-                   "directory.")
-            raise RuntimeError(msg)
-        elif download is False:
-            msg = ("The use of the download flag is deprecated, since the dataset "
-                   "is no longer publicly accessible.")
-            warnings.warn(msg, RuntimeWarning)
-
-        root = self.root = os.path.expanduser(root)
-        self.split = verify_str_arg(split, "split", ("train", "val"))
-
-        if not ignore_archive:
-            self.parse_archives()
-        wnid_to_classes = load_meta_file(self.root)[0]
-
-        super(ImageNet, self).__init__(self.split_folder, **kwargs)
+    def __init__(self, root, transform=None, split='train',frac_samples=0.02, download=None, load_mem=True, with_indexes=False, with_stats=False):
+        if load_mem:
+            mem_path = '/dev/shm/'+split
+            if not os.path.exists(mem_path):
+                copytree(root+split, "/dev/shm/"+split)
+            root = mem_path
+        super(ImageNet, self).__init__(root,transform=transform)
         self.root = root
+        self.split=split
+        self.with_indexes = with_indexes
+        self.with_stats = with_stats
+        #print("classes", self.classes)
+        self.class_to_idx = {clss: idx
+                             for idx, clss in enumerate(self.classes)}
+        self.frac_samples = frac_samples
+        self.preprocess()
 
-        self.wnids = self.classes
-        self.wnid_to_idx = self.class_to_idx
-        self.classes = [wnid_to_classes[wnid] for wnid in self.wnids]
-        self.class_to_idx = {cls: idx
-                             for idx, clss in enumerate(self.classes)
-                             for cls in clss}
-
-    def parse_archives(self):
-        if not check_integrity(os.path.join(self.root, META_FILE)):
-            parse_devkit_archive(self.root)
-
-        if not os.path.isdir(self.split_folder):
-            if self.split == 'train':
-                parse_train_archive(self.root)
-            elif self.split == 'val':
-                parse_val_archive(self.root)
-
+    def preprocess(self):
+        self.samples = []
+        directory = os.path.expanduser(self.root)
+        for target_class in sorted(self.class_to_idx.keys()):
+            class_index = self.class_to_idx[target_class]
+            target_dir = os.path.join(directory, target_class)
+            for root, _, fnames in sorted(os.walk(target_dir, followlinks=True)):
+                num_samples = int(len(fnames)*self.frac_samples)
+                fnames = sorted(fnames)
+                for f in range(num_samples):
+                    path = os.path.join(root, fnames[f])
+                    item = path, class_index
+                    self.samples.append(item)
+        print("samples", len(self.samples))
     @property
     def split_folder(self):
         return os.path.join(self.root, self.split)
 
     def extra_repr(self):
         return "Split: {split}".format(**self.__dict__)
+
+    def __getitem__(self, index):
+        path, target = self.samples[index]
+        img = self.loader(path)
+        if self.target_transform is not None:
+                target = self.target_transform(target)
+        if self.with_stats:
+            if self.transform is not None:
+                for t in self.transform.transforms:
+                    if isinstance(t, UniAugmentWeighted):
+                        img, op_num, level = t(img)
+                    else:
+                        img = t(img)
+                return img, target, torch.tensor(op_num), torch.tensor(level)
+        else:
+            if self.transform is not None:
+                img = self.transform(img)
+        if self.with_indexes:
+            return img, target, index
+        else:
+            return img, target
+    

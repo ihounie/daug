@@ -41,6 +41,7 @@ from aug_lib import AugMeter
 
 logger = get_logger('TrivialAugment')
 logger.setLevel(logging.DEBUG)
+scaler = torch.cuda.amp.GradScaler()
 
 def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars, wandb_log = True, augmented_dset=None, desc_default='', epoch=0, writer=None, verbose=1, scheduler=None,sample_pairing_loader=None, log_interval=100):
     tqdm_disable = bool(os.environ.get('TASK_NAME', ''))    # KakaoBrain Environment
@@ -116,7 +117,8 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
             ops[i*batch_size:(i+1)*batch_size] = op
             levels[i*batch_size:(i+1)*batch_size] = level
         with torch.no_grad():
-            proposal_loss = cross_entropy(model(proposals), label.repeat(mh_steps*n_aug), reduction="none")
+            with torch.cuda.amp.autocast():
+                proposal_loss = cross_entropy(model(proposals), label.repeat(mh_steps*n_aug), reduction="none")
         ##################################
         #   Build MC chains
         ##################################
@@ -178,23 +180,26 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
             loss = loss_fn(preds, label)
             mh_loss = mh_loss.mean()
         else:
-            preds = model(data)
-            clean_loss = loss_fn(preds, label)
-            mh_preds = model(mh_data)
-            mh_loss = loss_fn(mh_preds, label.repeat(n_aug))
-            # Primal descent
-            loss = clean_loss + dual_vars * mh_loss
+            with torch.cuda.amp.autocast():
+                preds = model(data)
+                clean_loss = loss_fn(preds, label)
+                mh_preds = model(mh_data)
+                mh_loss = loss_fn(mh_preds, label.repeat(n_aug))
+                # Primal descent
+                loss = clean_loss + dual_vars * mh_loss
         if optimizer:
             if communicate_grad:
-                loss.backward()
+                scaler.scale(loss).backward()
             else:
                 with model.no_sync():
-                    loss.backward()
+                    scaler.scale(loss).backward()
 
             if C.get()['optimizer'].get('clip', 5) > 0:
                 nn.utils.clip_grad_norm_(model.parameters(), C.get()['optimizer'].get('clip', 5))
             if (steps-1) % C.get().get('step_optimizer_every', 1) == C.get().get('step_optimizer_nth_step', 0): # default is to step on the first step of each pack
-                optimizer.step()
+                #optimizer.step()
+                scaler.step(optimizer)
+            scaler.update()
         ##############################
         #   Dual Ascent Step
         ##############################
