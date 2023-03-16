@@ -73,18 +73,15 @@ class ImageNet(ImageFolder):
         img = self.loader(path)
         if self.target_transform is not None:
                 target = self.target_transform(target)
+        if self.transform is not None:
+            for t in self.transform.transforms:
+                if isinstance(t, UniAugmentWeighted):
+                    img, op_num, level = t(img)
+                else:
+                    img = t(img)
         if self.with_stats:
-            if self.transform is not None:
-                for t in self.transform.transforms:
-                    if isinstance(t, UniAugmentWeighted):
-                        img, op_num, level = t(img)
-                    else:
-                        img = t(img)
-                return img, target, torch.tensor(op_num), torch.tensor(level)
-        else:
-            if self.transform is not None:
-                img = self.transform(img)
-        if self.with_indexes:
+            return img, target, torch.tensor(op_num), torch.tensor(level)
+        elif self.with_indexes:
             return img, target, index
         else:
             return img, target
