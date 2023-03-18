@@ -1,0 +1,2 @@
+local_rank=1
+CUDA_SET_VISIBLE_DEVICES=1 python -m TrivialAugment.train_pd_batch -c confs/imnet/adam_tight.yaml --dataroot ~/imnet-100-data/ --tag PD_2.5_rel --wandb_log --save results/imnet_pd_${seed} --local_rank ${local_rank} --project imnet100
