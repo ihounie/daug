@@ -23,6 +23,7 @@ from TrivialAugment.imagenet import ImageNet
 
 from TrivialAugment.augmentations import Lighting
 from aug_lib import UniAugmentWeighted
+from torchvision.transforms import AugMix
 
 
 def dataset_with_indices(cls):
@@ -255,6 +256,9 @@ def get_dataloaders(dataset, batch, dataroot, split=0.15, split_idx=0, distribut
         transform_aug = [get_randaugment(n=C.get()['randaug']['N'], m=C.get()['randaug']['M'],
                                                              weights=C.get()['randaug'].get('weights',None), bs=C.get()['batch'])]
         transform_aug = transforms.Compose([pre_transform_train]+ transform_aug+deepcopy(transform_train.transforms))
+    elif C.get()['aug'] == 'augmix':
+        transform_train.transforms.insert(0,AugMix())
+        
     elif C.get()['aug'] in ['default', 'inception', 'inception320']:
         pass
     else:
