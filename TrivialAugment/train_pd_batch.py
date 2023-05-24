@@ -96,7 +96,7 @@ def run_epoch_dual(rank, worldsize, model, loader, loss_fn, optimizer, dual_vars
         # First step
         aug_data, _, op, level = next(iter(aug_loader))
         if worldsize > 1:
-                aug_data = aug_data.to(rank)
+            aug_data = aug_data.to(rank)
         else:
             aug_data = aug_data.to(f"cuda:{rank}")
         batch_size = aug_data.shape[0]
@@ -389,28 +389,6 @@ def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, re
                     loss_test=rs['test']['loss'], top1_test=rs['test']['top1']
                 )
 
-                # save checkpoint
-                if save_path and C.get().get('save_model', True) and (worldsize <= 1 or torch.distributed.get_rank() == 0):
-                    logger.info('save model@%d to %s' % (epoch, save_path))
-                    torch.save({
-                        'epoch': epoch,
-                        'log': {
-                            'train': rs['train'].get_dict(),
-                            'test': rs['test'].get_dict(),
-                        },
-                        'optimizer': optimizer.state_dict(),
-                        'model': model.state_dict()
-                    }, save_path)
-                    torch.save({
-                        'epoch': epoch,
-                        'log': {
-                            'train': rs['train'].get_dict(),
-                            'test': rs['test'].get_dict(),
-                        },
-                        'optimizer': optimizer.state_dict(),
-                        'model': model.state_dict()
-                    }, save_path.replace('.pth', '_e%d_top1_%.3f_%.3f' % (epoch, rs['train']['top1'], rs['test']['top1']) + '.pth'))
-
         early_finish_epoch = C.get().get('early_finish_epoch', None)
         if early_finish_epoch == epoch:
             break
@@ -419,6 +397,11 @@ def train_and_eval(rank, worldsize, tag, dataroot, test_ratio=0.0, cv_fold=0, re
                 final_dict = {f"final {k}": v for k,v in result.items()}
                 wandb.log(final_dict)
                 if save_path and C.get().get('save_model', True):
+                    print('save model@%d to %s' % (epoch, save_path))
+                    torch.save(model.state_dict(), save_path)
+                    artifact = wandb.Artifact('model', type='model')
+                    artifact.add_file(save_path)
+                    wandb.log_artifact(artifact)
                     wandb.save()
             else:
                 wandb.log({"train": rs["train"].get_dict(), "epoch":epoch, "dualvar": dual_vars})
