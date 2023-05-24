@@ -2,7 +2,7 @@ load_main_model: true
 model:
   type: resnet50
 dataset: imagenet
-aug: primaldual
+aug: randaugment
 n_aug: 1
 augmentation_search_space: wide_standard # they used 224 x 244
 randaug:

@@ -1,4 +1,4 @@
-local_rank=0
+local_rank=1
 method="baselines"
 python create_variants_of_set_config.py confs/imnet/${method}/adam_5.yaml 1
 for seed in 1 2 3 4
