@@ -15,21 +15,19 @@ gpus: 1
 epoch: 270
 lr: .0005
 lr_schedule:
-  type: 'cosine' #'resnet'
-#  warmup:
-#    multiplier: 1.0
-#    epoch: 3
+  type: 'cosine'
 optimizer:
-  type: adam #sgd
-#  nesterov: True # not in original
-#  decay: 0.0001
-#  clip: 0
-seed: 0
+  type: adam
 MH:
   steps: 2
 PD:
   lr: 0.001
   margin: 0.7
   sample: False
-frac_samples: 0.025
-
+frac_samples: 0.01
+seed_set: 
+        - 0
+        - 1
+        - 2
+        - 3
+        - 4

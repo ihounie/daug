@@ -1,0 +1,33 @@
+load_main_model: true
+model:
+  type: resnet50
+dataset: imagenet
+aug: primaldual
+n_aug: 1
+augmentation_search_space: wide_standard # they used 224 x 244
+randaug:
+  N: 0
+  M: 0
+  weights: [0.0,1.0]
+cutout: 0
+batch: 128
+gpus: 1
+epoch: 270
+lr: .0005
+lr_schedule:
+  type: 'cosine'
+optimizer:
+  type: adam
+MH:
+  steps: 2
+PD:
+  lr: 0.001
+  margin: 0.7
+  sample: False
+frac_samples: 0.025
+seed_set: 
+        - 0
+        - 1
+        - 2
+        - 3
+        - 4
